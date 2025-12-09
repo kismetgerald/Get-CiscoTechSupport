@@ -2,5 +2,6 @@
 *.log
 .cisco_credentials
 Install-GetCiscoTechSupport_ChatGPT.ps1
+Get-CiscoTechSupport.zip
 .vscode/
 Results/
