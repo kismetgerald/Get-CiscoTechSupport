@@ -14,13 +14,13 @@
 #     Kismet Agbasi (Github: kismetgerald Email: KismetG17@gmail.com)
 #     
 # VERSION:
-#     1.0.0-alpha
+#     1.0.0-alpha2
 #
 # CREATED:
 #     December 4, 2025
 #
 # LAST UPDATED:
-#     December 7, 2025
+#     December 9, 2025
 #
 # DEPENDENCIES:
 #     - Python 3.6+
@@ -115,8 +115,8 @@
 #     Example: CORE-SW1_10.1.1.1_20241204_143022_tech-support.txt
 #
 # LOGS:
-#     - collection.log: Main activity log
-#     - hosts_offline.log: Failed/unreachable devices
+#     - Logs/collection.log: Main activity log
+#     - Logs/hosts_offline.log: Failed/unreachable devices
 #
 # ERROR HANDLING:
 #     - Connection timeouts: Logged and skipped
@@ -141,6 +141,8 @@
 #
 # ==============================================================================
 #
+
+# region Imports and Configuration
 
 # ============================================================================
 # CONFIGURATION SECTION - Modify these variables as needed
@@ -199,6 +201,10 @@ import re
 import getpass
 import json
 from base64 import b64encode, b64decode
+
+# endregion
+
+# region Library Imports and Availability Checks
 
 try:
     from netmiko import ConnectHandler, NetmikoTimeoutException, NetmikoAuthenticationException
@@ -259,6 +265,9 @@ IS_WINDOWS = platform.system() == 'Windows'
 IS_LINUX = platform.system() == 'Linux'
 IS_MAC = platform.system() == 'Darwin'
 
+# endregion
+
+# region Credential Manager Class
 
 class CredentialManager:
     """Manage credentials securely using multiple methods"""
@@ -407,6 +416,9 @@ class CredentialManager:
         key = b64encode(kdf.derive(password.encode()))
         return key
 
+# endregion
+
+# region Cisco Collector Class
 
 class CiscoCollector:
     def __init__(self, username, password, enable_secret=None, output_dir=None, 
@@ -426,8 +438,10 @@ class CiscoCollector:
             output_dir = self.get_default_output_dir()
         
         self.output_dir = Path(output_dir)
-        self.log_file = log_file
-        self.offline_log = offline_log
+        
+        # Set log file paths to Logs subfolder
+        self.log_file = self.get_log_path(log_file)
+        self.offline_log = self.get_log_path(offline_log)
         
         # Setup logging
         self.setup_logging()
@@ -450,6 +464,17 @@ class CiscoCollector:
         default_results_dir = script_dir / 'Results'
         
         return str(default_results_dir)
+    
+    @staticmethod
+    def get_log_path(log_filename):
+        """Get full path for log file in Logs subfolder"""
+        script_dir = Path(__file__).parent.resolve()
+        logs_dir = script_dir / 'Logs'
+        
+        # Create Logs directory if it doesn't exist
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        
+        return str(logs_dir / log_filename)
         
     def setup_logging(self):
         """Configure logging for the application"""
@@ -468,6 +493,8 @@ class CiscoCollector:
         with open(self.offline_log, 'a') as f:
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             f.write(f"{timestamp} - {host} - {reason}\n")
+    
+    # region Device Discovery Methods
     
     def snmp_discover_devices(self, subnet, snmp_version='2c', community='public',
                              v3_user=None, v3_auth_protocol='SHA', v3_auth_pass=None,
@@ -702,6 +729,10 @@ class CiscoCollector:
             
         return list(set(devices))  # Remove duplicates
     
+    # endregion
+    
+    # region Device Connection and Collection Methods
+    
     def connect_and_collect(self, device_ip):
         """Connect to a device and collect tech-support output"""
         self.logger.info(f"Connecting to {device_ip}")
@@ -792,7 +823,12 @@ class CiscoCollector:
                 results.append(result)
         
         return results
+    
+    # endregion
 
+# endregion
+
+# region Helper Functions
 
 def load_devices_from_file(filepath):
     """Load device list from text file (one IP per line)"""
@@ -809,6 +845,9 @@ def load_devices_from_file(filepath):
     
     return devices
 
+# endregion
+
+# region Main Function
 
 def main():
     parser = argparse.ArgumentParser(
@@ -969,6 +1008,7 @@ Examples:
     )
     
     print(f"Output directory: {collector.output_dir}")
+    print(f"Log directory: {Path(collector.log_file).parent}")
     print(f"Device type: {collector.device_type}")
     print(f"Connection timeout: {collector.connection_timeout}s")
     print(f"Command timeout: {collector.command_timeout}s")
@@ -1013,10 +1053,15 @@ Examples:
     print(f"Successful: {successful}")
     print(f"Failed: {failed}")
     print(f"\nOutput directory: {collector.output_dir}")
-    print(f"Main log: {args.log_file}")
-    print(f"Offline hosts log: {args.offline_log}")
+    print(f"Main log: {collector.log_file}")
+    print(f"Offline hosts log: {collector.offline_log}")
     print("="*60)
 
+# endregion
+
+# region Script Entry Point
 
 if __name__ == '__main__':
     main()
+
+# endregion
