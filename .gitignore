@@ -1,0 +1,6 @@
+# Created by Kismet Agbasi on 2025-12-04
+*.log
+.cisco_credentials
+Install-GetCiscoTechSupport_ChatGPT.ps1
+.vscode/
+Results/
