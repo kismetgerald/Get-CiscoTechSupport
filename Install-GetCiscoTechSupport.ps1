@@ -9,6 +9,10 @@
     Extracts the Cisco Tech-Support Collector archive, validates embedded Python
     distribution, and creates a scheduled task for automated collection runs. 
     Designed for offline deployment with embedded Python distribution.
+    
+    IMPORTANT: This solution REQUIRES a dedicated service account. The SYSTEM
+    account should NOT be used for production deployments due to credential
+    management and security audit limitations.
 
 .PARAMETER ArchivePath
     Path to the downloaded .zip archive from GitHub
@@ -22,11 +26,9 @@
 .PARAMETER ScheduleTime
     Time to run the scheduled task (default: 02:00)
 
-.PARAMETER TaskUsername
-    Username for scheduled task execution (default: SYSTEM)
-
-.PARAMETER TaskPassword
-    Password for scheduled task user (only if not using SYSTEM)
+.PARAMETER ServiceAccountCredential
+    PSCredential object for the dedicated service account that will run the scheduled task.
+    This account should have appropriate permissions for the installation and output directories.
 
 .PARAMETER DeviceListFile
     Path to devices.txt file for the collector
@@ -43,62 +45,82 @@
 .PARAMETER SkipTaskCreation
     Skip scheduled task creation
 
+.PARAMETER Uninstall
+    Uninstall the Cisco Tech-Support Collector and remove all components
+
 .EXAMPLE
     .\Install-GetCiscoTechSupport.ps1 -ArchivePath ".\cisco-collector.zip"
+    
+    Installs the collector and prompts for service account credentials interactively
+
+.EXAMPLE
+    $cred = Get-Credential -Message "Enter service account credentials"
+    .\Install-GetCiscoTechSupport.ps1 -ArchivePath ".\cisco-collector.zip" -ServiceAccountCredential $cred
+
+    Installs the collector using pre-captured credentials
 
 .EXAMPLE
     .\Install-GetCiscoTechSupport.ps1 -ArchivePath ".\cisco-collector.zip" -ScheduleType Weekly -ScheduleTime "03:00"
 
+    Installs with weekly schedule at 3:00 AM
+
 .EXAMPLE
-    .\Install-GetCiscoTechSupport.ps1 -ArchivePath ".\cisco-collector.zip" -SkipTaskCreation
+    .\Install-GetCiscoTechSupport.ps1 -Uninstall
+
+    Completely removes the Cisco Tech-Support Collector installation
 
 .NOTES
     Author: Kismet Agbasi (Github: kismetgerald Email: KismetG17@gmail.com)
-    Version: 1.0.0-alpha
-    Date: December 7, 2025
+    Version: 1.0.0-alpha2
+    Date: December 9, 2025
     Requires: PowerShell 5.1+ with Administrator privileges
     
     IMPORTANT: This script is designed for embedded Python distributions.
     The archive should contain Python at the root level, not inside a .venv folder.
+    
+    SECURITY NOTE: A dedicated service account is REQUIRED for production use.
+    The SYSTEM account should only be used for testing/development purposes.
 #>
 
-[CmdletBinding(SupportsShouldProcess)]
+[CmdletBinding(SupportsShouldProcess, DefaultParameterSetName='Install')]
 param(
-    [Parameter(Mandatory = $true, HelpMessage = "Path to the .zip archive")]
+    [Parameter(Mandatory = $true, ParameterSetName='Install', HelpMessage = "Path to the .zip archive")]
     [ValidateScript({Test-Path $_ -PathType Leaf})]
     [string]$ArchivePath,
 
-    [Parameter(Mandatory = $false)]
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
+    [Parameter(Mandatory = $false, ParameterSetName='Uninstall')]
     [string]$InstallPath = "C:\Scripts\Get-CiscoTechSupport",
 
-    [Parameter(Mandatory = $false)]
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
     [ValidateSet('Daily', 'Weekly', 'Monthly', 'None')]
     [string]$ScheduleType = 'Daily',
 
-    [Parameter(Mandatory = $false)]
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
     [ValidatePattern('^\d{2}:\d{2}$')]
     [string]$ScheduleTime = '02:00',
 
-    [Parameter(Mandatory = $false)]
-    [string]$TaskUsername = 'SYSTEM',
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
+    [PSCredential]$ServiceAccountCredential,
 
-    [Parameter(Mandatory = $false)]
-    [SecureString]$TaskPassword,
-
-    [Parameter(Mandatory = $false)]
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
     [string]$DeviceListFile,
 
-    [Parameter(Mandatory = $false)]
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
     [string]$OutputDirectory,
 
-    [Parameter(Mandatory = $false)]
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
+    [Parameter(Mandatory = $false, ParameterSetName='Uninstall')]
     [string]$LogPath = "C:\Logs\Get-CiscoTechSupport-Install.log",
 
-    [Parameter(Mandatory = $false)]
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
     [switch]$Force,
 
-    [Parameter(Mandatory = $false)]
-    [switch]$SkipTaskCreation
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
+    [switch]$SkipTaskCreation,
+
+    [Parameter(Mandatory = $true, ParameterSetName='Uninstall')]
+    [switch]$Uninstall
 )
 
 #region Configuration
@@ -208,6 +230,49 @@ function Expand-ArchiveCompat {
         Write-InstallLog -Message "Failed to extract archive: $_" -Level ERROR
         throw
     }
+}
+
+function Get-ServiceAccountCredential {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [PSCredential]$Credential
+    )
+    
+    if ($Credential) {
+        Write-InstallLog -Message "Using provided service account credential" -Level INFO
+        return $Credential
+    }
+    
+    Write-Host "`n" -NoNewline
+    Write-Host "=" * 80 -ForegroundColor Cyan
+    Write-Host "SERVICE ACCOUNT CONFIGURATION" -ForegroundColor Cyan
+    Write-Host "=" * 80 -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "IMPORTANT: " -ForegroundColor Yellow -NoNewline
+    Write-Host "This scheduled task MUST run under a dedicated service account." -ForegroundColor White
+    Write-Host ""
+    Write-Host "The service account must have:" -ForegroundColor White
+    Write-Host "  • Read/Execute permissions on the installation directory" -ForegroundColor Gray
+    Write-Host "  • Modify permissions on the output directory" -ForegroundColor Gray
+    Write-Host "  • Network access to reach Cisco devices" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "Example service account names:" -ForegroundColor White
+    Write-Host "  • DOMAIN\svc_cisco_collector" -ForegroundColor Gray
+    Write-Host "  • .\ServiceAccount (local account)" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "=" * 80 -ForegroundColor Cyan
+    Write-Host ""
+    
+    $cred = Get-Credential -Message "Enter credentials for the service account that will run the scheduled task"
+    
+    if (-not $cred) {
+        Write-InstallLog -Message "No credentials provided - installation cancelled" -Level ERROR
+        throw "Service account credentials are required"
+    }
+    
+    Write-InstallLog -Message "Service account configured: $($cred.UserName)" -Level SUCCESS
+    return $cred
 }
 #endregion
 
@@ -324,8 +389,7 @@ function New-CiscoCollectorTask {
         [string]$InstallPath,
         [string]$ScheduleType,
         [string]$ScheduleTime,
-        [string]$Username,
-        [SecureString]$Password,
+        [PSCredential]$Credential,
         [string]$TaskArguments
     )
     
@@ -359,49 +423,51 @@ function New-CiscoCollectorTask {
         }
     }
     
-    # Create principal (user context)
-    if ($Username -eq 'SYSTEM') {
-        $principal = New-ScheduledTaskPrincipal -UserId "NT AUTHORITY\SYSTEM" -LogonType ServiceAccount -RunLevel Highest
-    }
-    else {
-        if (-not $Password) {
-            Write-InstallLog -Message "Password required for non-SYSTEM accounts" -Level ERROR
-            throw "Password required"
-        }
-        $credential = New-Object System.Management.Automation.PSCredential($Username, $Password)
-        $principal = New-ScheduledTaskPrincipal -UserId $Username -LogonType Password -RunLevel Highest
-    }
-    
     # Create settings
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RunOnlyIfNetworkAvailable
     
     # Create description
-    $description = "Automated collection of Cisco tech-support output from network devices. Configured to run $ScheduleType at $ScheduleTime."
+    $description = "Automated collection of Cisco tech-support output from network devices. Configured to run $ScheduleType at $ScheduleTime. IMPORTANT: This task must NOT be run as SYSTEM - use a dedicated service account."
     
-    # Register task
+    # Register task with service account credentials
     try {
-        if ($Username -eq 'SYSTEM') {
-            if ($trigger) {
-                Register-ScheduledTask -TaskName $script:TaskName -Description $description -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
-            }
-            else {
-                Register-ScheduledTask -TaskName $script:TaskName -Description $description -Action $action -Principal $principal -Settings $settings -Force | Out-Null
-            }
+        $username = $Credential.UserName
+        $password = $Credential.GetNetworkCredential().Password
+        
+        if ($trigger) {
+            Register-ScheduledTask -TaskName $script:TaskName `
+                                   -Description $description `
+                                   -Action $action `
+                                   -Trigger $trigger `
+                                   -User $username `
+                                   -Password $password `
+                                   -Settings $settings `
+                                   -RunLevel Highest `
+                                   -Force | Out-Null
         }
         else {
-            $plainPassword = $credential.GetNetworkCredential().Password
-            if ($trigger) {
-                Register-ScheduledTask -TaskName $script:TaskName -Description $description -Action $action -Trigger $trigger -User $Username -Password $plainPassword -Settings $settings -RunLevel Highest -Force | Out-Null
-            }
-            else {
-                Register-ScheduledTask -TaskName $script:TaskName -Description $description -Action $action -User $Username -Password $plainPassword -Settings $settings -RunLevel Highest -Force | Out-Null
-            }
+            Register-ScheduledTask -TaskName $script:TaskName `
+                                   -Description $description `
+                                   -Action $action `
+                                   -User $username `
+                                   -Password $password `
+                                   -Settings $settings `
+                                   -RunLevel Highest `
+                                   -Force | Out-Null
         }
         
         Write-InstallLog -Message "Scheduled task created successfully" -Level SUCCESS
         Write-InstallLog -Message "Task: $script:TaskName" -Level INFO
         Write-InstallLog -Message "Schedule: $ScheduleType at $ScheduleTime" -Level INFO
-        Write-InstallLog -Message "User: $Username" -Level INFO
+        Write-InstallLog -Message "User: $username" -Level INFO
+        
+        # Verify task is NOT running as SYSTEM
+        $task = Get-ScheduledTask -TaskName $script:TaskName
+        $principal = $task.Principal
+        if ($principal.UserId -like "*SYSTEM*") {
+            Write-InstallLog -Message "WARNING: Task is configured to run as SYSTEM - this is not supported!" -Level ERROR
+            Write-InstallLog -Message "The Python script will fail if executed as SYSTEM." -Level ERROR
+        }
     }
     catch {
         Write-InstallLog -Message "Failed to create scheduled task: $_" -Level ERROR
@@ -415,15 +481,166 @@ function Remove-CiscoCollectorTask {
         if ($existingTask) {
             Unregister-ScheduledTask -TaskName $script:TaskName -Confirm:$false
             Write-InstallLog -Message "Removed existing scheduled task" -Level INFO
+            return $true
         }
+        return $false
     }
     catch {
         Write-InstallLog -Message "Warning: Could not remove existing task: $_" -Level WARNING
+        return $false
     }
 }
 #endregion
 
-#region Main Installation Logic - Part 1
+#region Uninstallation Functions
+function Uninstall-CiscoCollector {
+    try {
+        Write-LogSection "CISCO TECH-SUPPORT COLLECTOR UNINSTALLATION"
+        Write-InstallLog -Message "Uninstallation started at $(Get-Date)" -Level INFO
+        Write-InstallLog -Message "User: $env:USERNAME on $env:COMPUTERNAME" -Level INFO
+        
+        # Check administrator privileges
+        if (-not (Test-Administrator)) {
+            Write-InstallLog -Message "This script requires Administrator privileges" -Level ERROR
+            throw "Administrator privileges required"
+        }
+        Write-InstallLog -Message "Administrator privileges confirmed" -Level SUCCESS
+        
+        $componentsRemoved = @()
+        $componentsFailed = @()
+        
+        # Check if installation exists
+        if (-not (Test-Path $InstallPath)) {
+            Write-InstallLog -Message "Installation directory not found: $InstallPath" -Level WARNING
+            Write-InstallLog -Message "Nothing to uninstall" -Level INFO
+            return
+        }
+        
+        Write-InstallLog -Message "Found installation at: $InstallPath" -Level INFO
+        
+        # Prompt for confirmation
+        Write-Host "`n" -NoNewline
+        Write-Host "WARNING: " -ForegroundColor Red -NoNewline
+        Write-Host "This will completely remove the Cisco Tech-Support Collector" -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "The following will be removed:" -ForegroundColor White
+        Write-Host "  • Installation directory: $InstallPath" -ForegroundColor Gray
+        Write-Host "  • Scheduled task: $script:TaskName" -ForegroundColor Gray
+        Write-Host "  • All Python scripts and dependencies" -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "NOTE: " -ForegroundColor Yellow -NoNewline
+        Write-Host "Saved credentials and output files will NOT be removed" -ForegroundColor White
+        Write-Host "      (These must be manually deleted if needed)" -ForegroundColor Gray
+        Write-Host ""
+        
+        $confirmation = Read-Host "Type 'YES' to confirm uninstallation"
+        
+        if ($confirmation -ne 'YES') {
+            Write-InstallLog -Message "Uninstallation cancelled by user" -Level WARNING
+            Write-Host "`nUninstallation cancelled" -ForegroundColor Yellow
+            return
+        }
+        
+        Write-Host ""
+        Write-LogSection "REMOVING COMPONENTS"
+        
+        # Remove scheduled task
+        Write-InstallLog -Message "Removing scheduled task..." -Level INFO
+        if (Remove-CiscoCollectorTask) {
+            Write-InstallLog -Message "Scheduled task removed successfully" -Level SUCCESS
+            $componentsRemoved += "Scheduled Task"
+        }
+        else {
+            Write-InstallLog -Message "No scheduled task found to remove" -Level INFO
+        }
+        
+        # Remove installation directory
+        Write-InstallLog -Message "Removing installation directory..." -Level INFO
+        try {
+            # Check for running processes
+            $pythonExe = Join-Path $InstallPath "python.exe"
+            if (Test-Path $pythonExe) {
+                $runningProcesses = Get-Process | Where-Object { $_.Path -like "$InstallPath*" }
+                if ($runningProcesses) {
+                    Write-InstallLog -Message "Found running processes from installation directory" -Level WARNING
+                    foreach ($proc in $runningProcesses) {
+                        Write-InstallLog -Message "  Stopping process: $($proc.Name) (PID: $($proc.Id))" -Level INFO
+                        Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+                    }
+                    Start-Sleep -Seconds 2
+                }
+            }
+            
+            Remove-Item -Path $InstallPath -Recurse -Force -ErrorAction Stop
+            Write-InstallLog -Message "Installation directory removed successfully" -Level SUCCESS
+            $componentsRemoved += "Installation Directory"
+        }
+        catch {
+            Write-InstallLog -Message "Failed to remove installation directory: $_" -Level ERROR
+            $componentsFailed += "Installation Directory"
+        }
+        
+        # Summary
+        Write-LogSection "UNINSTALLATION SUMMARY"
+        
+        if ($componentsRemoved.Count -gt 0) {
+            Write-InstallLog -Message "Successfully removed:" -Level SUCCESS
+            foreach ($component in $componentsRemoved) {
+                Write-InstallLog -Message "  • $component" -Level SUCCESS
+            }
+        }
+        
+        if ($componentsFailed.Count -gt 0) {
+            Write-InstallLog -Message "Failed to remove:" -Level ERROR
+            foreach ($component in $componentsFailed) {
+                Write-InstallLog -Message "  • $component" -Level ERROR
+            }
+        }
+        
+        # Manual cleanup notes
+        Write-Host "`n" -NoNewline
+        Write-Host "=" * 80 -ForegroundColor Cyan
+        Write-Host "MANUAL CLEANUP REQUIRED" -ForegroundColor Cyan
+        Write-Host "=" * 80 -ForegroundColor Cyan
+        Write-Host ""
+        Write-Host "The following items were NOT automatically removed and may require manual cleanup:" -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "1. Saved Credentials (if configured):" -ForegroundColor White
+        Write-Host "   Location: Service account's Windows Credential Manager" -ForegroundColor Gray
+        Write-Host "   Access via: Control Panel > Credential Manager > Windows Credentials" -ForegroundColor Gray
+        Write-Host "   Look for: Entries containing 'cisco' or device hostnames" -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "2. Output Files:" -ForegroundColor White
+        Write-Host "   Location: Previously configured output directory" -ForegroundColor Gray
+        Write-Host "   Contains: Collected tech-support files" -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "3. Log Files:" -ForegroundColor White
+        Write-Host "   Location: $script:LogFile" -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "4. Service Account:" -ForegroundColor White
+        Write-Host "   If a dedicated service account was created, it can be disabled/removed" -ForegroundColor Gray
+        Write-Host "   from Active Directory or local user accounts" -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "=" * 80 -ForegroundColor Cyan
+        Write-Host ""
+        
+        if ($componentsFailed.Count -eq 0) {
+            Write-Host "Uninstallation completed successfully!" -ForegroundColor Green
+        }
+        else {
+            Write-Host "Uninstallation completed with errors. Check log file: $script:LogFile" -ForegroundColor Yellow
+        }
+        
+    }
+    catch {
+        Write-InstallLog -Message "Uninstallation failed: $_" -Level ERROR
+        Write-InstallLog -Message "Stack trace: $($_.ScriptStackTrace)" -Level DEBUG
+        throw
+    }
+}
+#endregion
+
+#region Main Installation Logic
 function Install-CiscoCollector {
     try {
         Write-LogSection "CISCO TECH-SUPPORT COLLECTOR INSTALLATION"
@@ -440,6 +657,12 @@ function Install-CiscoCollector {
         # Check PowerShell version
         Write-LogSection "SYSTEM VALIDATION"
         Get-PowerShellVersion | Out-Null
+        
+        # Get service account credentials early if we're creating a task
+        $serviceAccountCred = $null
+        if (-not $SkipTaskCreation -and $ScheduleType -ne 'None') {
+            $serviceAccountCred = Get-ServiceAccountCredential -Credential $ServiceAccountCredential
+        }
         
         # Resolve archive path
         $resolvedArchive = Resolve-Path $ArchivePath
@@ -666,8 +889,7 @@ function Install-CiscoCollector {
             New-CiscoCollectorTask -InstallPath $InstallPath `
                                    -ScheduleType $ScheduleType `
                                    -ScheduleTime $ScheduleTime `
-                                   -Username $TaskUsername `
-                                   -Password $TaskPassword `
+                                   -Credential $serviceAccountCred `
                                    -TaskArguments $taskArguments
         }
         else {
@@ -683,6 +905,7 @@ function Install-CiscoCollector {
         if (-not $SkipTaskCreation -and $ScheduleType -ne 'None') {
             Write-InstallLog -Message "Scheduled Task: $script:TaskName" -Level SUCCESS
             Write-InstallLog -Message "Schedule: $ScheduleType at $ScheduleTime" -Level SUCCESS
+            Write-InstallLog -Message "Service Account: $($serviceAccountCred.UserName)" -Level SUCCESS
         }
         
         Write-Host "`n" -NoNewline
@@ -690,97 +913,69 @@ function Install-CiscoCollector {
         Write-Host "Check log file for details: $script:LogFile" -ForegroundColor White
         
         # Show next steps
-        Write-Host "`nNext Steps:" -ForegroundColor Cyan
+        Write-Host "`n" -NoNewline
+        Write-Host "=" * 80 -ForegroundColor Cyan
+        Write-Host "NEXT STEPS" -ForegroundColor Cyan
+        Write-Host "=" * 80 -ForegroundColor Cyan
+        Write-Host ""
         
-        # Step 1: Service Account Configuration (if using SYSTEM)
-        if ($TaskUsername -eq 'SYSTEM') {
-            Write-Host "`n  1. Configure a dedicated service account (RECOMMENDED):" -ForegroundColor Yellow
-            Write-Host "     a. Create a dedicated AD service account (e.g., svc_cisco_collector)" -ForegroundColor Gray
-            Write-Host "     b. Grant the service account:" -ForegroundColor Gray
-            Write-Host "        - Read/Execute on: $InstallPath" -ForegroundColor DarkGray
-            Write-Host "        - Modify on: $(Join-Path $InstallPath 'Results')" -ForegroundColor DarkGray
-            if (-not $isDiscoveryMode) {
-                $devicesFilePath = Join-Path $InstallPath "devices.txt"
-                if (Test-Path $devicesFilePath) {
-                    Write-Host "        - Read on: $devicesFilePath" -ForegroundColor DarkGray
-                }
-            }
-            Write-Host "     c. Update the scheduled task to use the service account:" -ForegroundColor Gray
-            Write-Host "        `$cred = Get-Credential" -ForegroundColor DarkGray
-            Write-Host "        Set-ScheduledTask -TaskName '$script:TaskName' ``" -ForegroundColor DarkGray
-            Write-Host "            -User `$cred.UserName ``" -ForegroundColor DarkGray
-            Write-Host "            -Password `$cred.GetNetworkCredential().Password" -ForegroundColor DarkGray
-            Write-Host "`n     NOTE: Using SYSTEM account is not recommended for production!" -ForegroundColor Yellow
-            Write-Host "           Credentials saved as SYSTEM cannot be easily managed or audited." -ForegroundColor Yellow
-        }
-        else {
-            Write-Host "`n  1. Service account configured: $TaskUsername" -ForegroundColor Green
-        }
+        # Step 1: Configure credentials
+        Write-Host "1. Configure Cisco device credentials:" -ForegroundColor White
+        Write-Host "   Run as the service account ($($serviceAccountCred.UserName)):" -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "   runas /user:$($serviceAccountCred.UserName) powershell.exe" -ForegroundColor DarkGray
+        Write-Host ""
+        Write-Host "   Then in the service account PowerShell window:" -ForegroundColor Gray
+        Write-Host "   cd `"$InstallPath`"" -ForegroundColor DarkGray
+        Write-Host "   .\python.exe $script:PythonScriptName --save-credentials" -ForegroundColor DarkGray
+        Write-Host ""
         
-        # Step 2: Configure credentials
-        $stepNum = 2
-        Write-Host "`n  $stepNum. Configure Cisco device credentials:" -ForegroundColor White
-        if ($TaskUsername -eq 'SYSTEM') {
-            Write-Host "`n     Option A: Using service account (RECOMMENDED - complete Step 1 first):" -ForegroundColor Gray
-            Write-Host "     - Run: runas /user:DOMAIN\svc_cisco_collector powershell.exe" -ForegroundColor DarkGray
-            Write-Host "     - In the service account PowerShell window:" -ForegroundColor DarkGray
-            Write-Host "       cd `"$InstallPath`"" -ForegroundColor DarkGray
-            Write-Host "       .\python.exe $script:PythonScriptName --save-credentials" -ForegroundColor DarkGray
-            Write-Host "`n     Option B: Using SYSTEM account (not recommended):" -ForegroundColor Gray
-            Write-Host "     - Run: .\Utils\PsTools\PsExec.exe -i -s powershell.exe" -ForegroundColor DarkGray
-            Write-Host "     - In the SYSTEM PowerShell window:" -ForegroundColor DarkGray
-            Write-Host "       cd `"$InstallPath`"" -ForegroundColor DarkGray
-            Write-Host "       .\python.exe $script:PythonScriptName --save-credentials" -ForegroundColor DarkGray
-        }
-        else {
-            Write-Host "     Run as the service account ($TaskUsername):" -ForegroundColor Gray
-            Write-Host "     - Run: runas /user:$TaskUsername powershell.exe" -ForegroundColor DarkGray
-            Write-Host "     - In the service account PowerShell window:" -ForegroundColor DarkGray
-            Write-Host "       cd `"$InstallPath`"" -ForegroundColor DarkGray
-            Write-Host "       .\python.exe $script:PythonScriptName --save-credentials" -ForegroundColor DarkGray
-        }
-        
-        # Step 3: Verify/Test
-        $stepNum++
-        
-        # Check if we're in discovery mode or device list mode
+        # Step 2: Verify/Test
         $devicesFilePath = Join-Path $InstallPath "devices.txt"
         if ($isDiscoveryMode) {
-            # Discovery mode - no mention of devices.txt
-            Write-Host "`n  $stepNum. Test the collection manually (as the service account):" -ForegroundColor White
-            Write-Host "     cd `"$InstallPath`"" -ForegroundColor Gray
-            Write-Host "     .\python.exe $script:PythonScriptName --discover" -ForegroundColor Gray
+            Write-Host "2. Test the collection manually (as the service account):" -ForegroundColor White
+            Write-Host "   cd `"$InstallPath`"" -ForegroundColor Gray
+            Write-Host "   .\python.exe $script:PythonScriptName --discover" -ForegroundColor Gray
         }
         elseif (Test-Path $devicesFilePath) {
-            # Device list mode - file was created during installation
-            Write-Host "`n  $stepNum. Verify the device list file was created correctly:" -ForegroundColor White
-            Write-Host "     type `"$devicesFilePath`"" -ForegroundColor Gray
-            Write-Host "     (Should contain the device IPs/hostnames you specified)" -ForegroundColor DarkGray
-            $stepNum++
-            Write-Host "`n  $stepNum. Test the collection manually (as the service account):" -ForegroundColor White
-            Write-Host "     cd `"$InstallPath`"" -ForegroundColor Gray
-            Write-Host "     .\python.exe $script:PythonScriptName -f devices.txt" -ForegroundColor Gray
+            Write-Host "2. Verify the device list file was created correctly:" -ForegroundColor White
+            Write-Host "   type `"$devicesFilePath`"" -ForegroundColor Gray
+            Write-Host "   (Should contain the device IPs/hostnames you specified)" -ForegroundColor DarkGray
+            Write-Host ""
+            Write-Host "3. Test the collection manually (as the service account):" -ForegroundColor White
+            Write-Host "   cd `"$InstallPath`"" -ForegroundColor Gray
+            Write-Host "   .\python.exe $script:PythonScriptName -f devices.txt" -ForegroundColor Gray
         }
         else {
-            # Device list mode - but file was provided externally
-            Write-Host "`n  $stepNum. Verify your device list file contains the correct devices" -ForegroundColor White
-            $stepNum++
-            Write-Host "`n  $stepNum. Test the collection manually (as the service account):" -ForegroundColor White
-            Write-Host "     cd `"$InstallPath`"" -ForegroundColor Gray
-            Write-Host "     .\python.exe $script:PythonScriptName -f <your_device_file>" -ForegroundColor Gray
+            Write-Host "2. Verify your device list file contains the correct devices" -ForegroundColor White
+            Write-Host ""
+            Write-Host "3. Test the collection manually (as the service account):" -ForegroundColor White
+            Write-Host "   cd `"$InstallPath`"" -ForegroundColor Gray
+            Write-Host "   .\python.exe $script:PythonScriptName -f <your_device_file>" -ForegroundColor Gray
         }
+        Write-Host ""
         
         # Final step: View task
         if (-not $SkipTaskCreation -and $ScheduleType -ne 'None') {
-            $stepNum++
-            Write-Host "`n  $stepNum. Verify scheduled task configuration:" -ForegroundColor White
-            Write-Host "     Get-ScheduledTask -TaskName '$script:TaskName' | Select-Object TaskName,State" -ForegroundColor Gray
-            Write-Host "     Get-ScheduledTask -TaskName '$script:TaskName' | Select-Object -ExpandProperty Principal" -ForegroundColor Gray
+            $lastStep = if ($isDiscoveryMode) { "3" } else { "4" }
+            Write-Host "$lastStep. Verify scheduled task configuration:" -ForegroundColor White
+            Write-Host "   Get-ScheduledTask -TaskName '$script:TaskName' | Select-Object TaskName,State" -ForegroundColor Gray
+            Write-Host "   Get-ScheduledTask -TaskName '$script:TaskName' | Select-Object -ExpandProperty Principal" -ForegroundColor Gray
             Write-Host ""
         }
-        else {
-            Write-Host ""
-        }
+        
+        # Important warnings
+        Write-Host "=" * 80 -ForegroundColor Yellow
+        Write-Host "IMPORTANT SECURITY NOTES" -ForegroundColor Yellow
+        Write-Host "=" * 80 -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "• The Python script will FAIL if the scheduled task is changed to run as SYSTEM" -ForegroundColor Red
+        Write-Host "• Always use the dedicated service account: $($serviceAccountCred.UserName)" -ForegroundColor Yellow
+        Write-Host "• Credentials are stored securely in Windows Credential Manager" -ForegroundColor White
+        Write-Host "• Only the service account that saved credentials can access them" -ForegroundColor White
+        Write-Host ""
+        Write-Host "=" * 80 -ForegroundColor Yellow
+        Write-Host ""
         
     }
     catch {
@@ -793,10 +988,15 @@ function Install-CiscoCollector {
 
 #region Script Execution
 try {
-    Install-CiscoCollector
+    if ($Uninstall) {
+        Uninstall-CiscoCollector
+    }
+    else {
+        Install-CiscoCollector
+    }
 }
 catch {
-    Write-Host "`nInstallation failed. Check log file for details: $script:LogFile" -ForegroundColor Red
+    Write-Host "`nOperation failed. Check log file for details: $script:LogFile" -ForegroundColor Red
     exit 1
 }
 #endregion
