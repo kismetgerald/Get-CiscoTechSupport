@@ -29,6 +29,13 @@
 .PARAMETER ServiceAccountCredential
     PSCredential object for the dedicated service account that will run the scheduled task.
     This account should have appropriate permissions for the installation and output directories.
+    
+    NOTE: Device authentication credentials are configured separately using --save-credentials.
+    These can be:
+    - Different credentials (local device accounts, TACACS+, or RADIUS)
+    - The same as the service account (if RADIUS/TACACS+ AAA is configured for this account)
+    
+    Credentials are stored encrypted in .cisco_credentials file using Windows DPAPI.
 
 .PARAMETER DeviceListFile
     Path to devices.txt file for the collector
@@ -72,14 +79,13 @@
 .NOTES
     Author: Kismet Agbasi (Github: kismetgerald Email: KismetG17@gmail.com)
     Version: 2.0.0
-    Date: December 9, 2025
+    Date: December 10, 2025
     Requires: PowerShell 5.1+ with Administrator privileges
     
     IMPORTANT: This script is designed for embedded Python distributions.
     The archive should contain Python at the root level, not inside a .venv folder.
     
     SECURITY NOTE: A dedicated service account is REQUIRED for production use.
-    The service account must have appropriate permissions.
     The SYSTEM account should only be used for testing/development purposes.
 #>
 
@@ -246,23 +252,30 @@ function Get-ServiceAccountCredential {
     }
     
     Write-Host "`n" -NoNewline
-    Write-Host "=" * 80 -ForegroundColor Cyan
+    Write-Host ("=" * 80) -ForegroundColor Cyan
     Write-Host "SERVICE ACCOUNT CONFIGURATION" -ForegroundColor Cyan
-    Write-Host "=" * 80 -ForegroundColor Cyan
+    Write-Host ("=" * 80) -ForegroundColor Cyan
     Write-Host ""
     Write-Host "IMPORTANT: " -ForegroundColor Yellow -NoNewline
     Write-Host "This scheduled task MUST run under a dedicated service account." -ForegroundColor White
     Write-Host ""
+    Write-Host "NOTE: " -ForegroundColor Cyan -NoNewline
+    Write-Host "Service account purpose:" -ForegroundColor White
+    Write-Host "  - Runs the scheduled task" -ForegroundColor Gray
+    Write-Host "  - Stores device credentials in encrypted file" -ForegroundColor Gray
+    Write-Host "  - Can optionally be used for RADIUS/TACACS+ authentication to devices" -ForegroundColor Gray
+    Write-Host ""
     Write-Host "The service account must have:" -ForegroundColor White
-    Write-Host "  • Read/Execute permissions on the installation directory" -ForegroundColor Gray
-    Write-Host "  • Modify permissions on the output directory" -ForegroundColor Gray
-    Write-Host "  • Network access to reach Cisco devices" -ForegroundColor Gray
+    Write-Host "  - Read/Execute permissions on: $InstallPath" -ForegroundColor Gray
+    Write-Host "  - Modify permissions on output directory" -ForegroundColor Gray
+    Write-Host "  - Network connectivity to reach Cisco devices" -ForegroundColor Gray
+    Write-Host "  - (Optional) RADIUS/TACACS+ access if used for device authentication" -ForegroundColor Gray
     Write-Host ""
     Write-Host "Example service account names:" -ForegroundColor White
-    Write-Host "  • DOMAIN\svc_cisco_collector" -ForegroundColor Gray
-    Write-Host "  • .\ServiceAccount (local account)" -ForegroundColor Gray
+    Write-Host "  - DOMAIN\svc_cisco_collector" -ForegroundColor Gray
+    Write-Host "  - .\ServiceAccount (local account)" -ForegroundColor Gray
     Write-Host ""
-    Write-Host "=" * 80 -ForegroundColor Cyan
+    Write-Host ("=" * 80) -ForegroundColor Cyan
     Write-Host ""
     
     $cred = Get-Credential -Message "Enter credentials for the service account that will run the scheduled task"
@@ -509,9 +522,9 @@ function Uninstall-CiscoCollector {
         Write-Host "This will completely remove the Cisco Tech-Support Collector" -ForegroundColor Yellow
         Write-Host ""
         Write-Host "The following will be removed:" -ForegroundColor White
-        Write-Host "  • Installation directory: $InstallPath" -ForegroundColor Gray
-        Write-Host "  • Scheduled task: $script:TaskName" -ForegroundColor Gray
-        Write-Host "  • All Python scripts and dependencies" -ForegroundColor Gray
+        Write-Host "  - Installation directory: $InstallPath" -ForegroundColor Gray
+        Write-Host "  - Scheduled task: $script:TaskName" -ForegroundColor Gray
+        Write-Host "  - All Python scripts and dependencies" -ForegroundColor Gray
         Write-Host ""
         Write-Host "NOTE: " -ForegroundColor Yellow -NoNewline
         Write-Host "Saved credentials and output files will NOT be removed" -ForegroundColor White
@@ -567,28 +580,27 @@ function Uninstall-CiscoCollector {
         if ($componentsRemoved.Count -gt 0) {
             Write-InstallLog -Message "Successfully removed:" -Level SUCCESS
             foreach ($component in $componentsRemoved) {
-                Write-InstallLog -Message "  • $component" -Level SUCCESS
+                Write-InstallLog -Message "  - $component" -Level SUCCESS
             }
         }
         
         if ($componentsFailed.Count -gt 0) {
             Write-InstallLog -Message "Failed to remove:" -Level ERROR
             foreach ($component in $componentsFailed) {
-                Write-InstallLog -Message "  • $component" -Level ERROR
+                Write-InstallLog -Message "  - $component" -Level ERROR
             }
         }
         
         Write-Host "`n" -NoNewline
-        Write-Host "=" * 80 -ForegroundColor Cyan
+        Write-Host ("=" * 80) -ForegroundColor Cyan
         Write-Host "MANUAL CLEANUP REQUIRED" -ForegroundColor Cyan
-        Write-Host "=" * 80 -ForegroundColor Cyan
+        Write-Host ("=" * 80) -ForegroundColor Cyan
         Write-Host ""
         Write-Host "The following items were NOT automatically removed and may require manual cleanup:" -ForegroundColor Yellow
         Write-Host ""
-        Write-Host "1. Saved Credentials (if configured):" -ForegroundColor White
-        Write-Host "   Location: Service account's Windows Credential Manager" -ForegroundColor Gray
-        Write-Host "   Access via: Control Panel > Credential Manager > Windows Credentials" -ForegroundColor Gray
-        Write-Host "   Look for: Entries containing 'cisco' or device hostnames" -ForegroundColor Gray
+        Write-Host "1. Saved Credentials:" -ForegroundColor White
+        Write-Host "   Location: $InstallPath\.cisco_credentials" -ForegroundColor Gray
+        Write-Host "   (Encrypted credentials file - can only be read by service account)" -ForegroundColor Gray
         Write-Host ""
         Write-Host "2. Output Files:" -ForegroundColor White
         Write-Host "   Location: Previously configured output directory" -ForegroundColor Gray
@@ -601,7 +613,7 @@ function Uninstall-CiscoCollector {
         Write-Host "   If a dedicated service account was created, it can be disabled/removed" -ForegroundColor Gray
         Write-Host "   from Active Directory or local user accounts" -ForegroundColor Gray
         Write-Host ""
-        Write-Host "=" * 80 -ForegroundColor Cyan
+        Write-Host ("=" * 80) -ForegroundColor Cyan
         Write-Host ""
         
         if ($componentsFailed.Count -eq 0) {
@@ -868,63 +880,112 @@ function Install-CiscoCollector {
         Write-Host "Check log file for details: $script:LogFile" -ForegroundColor White
         
         Write-Host "`n" -NoNewline
-        Write-Host "=" * 80 -ForegroundColor Cyan
+        Write-Host ("=" * 80) -ForegroundColor Cyan
         Write-Host "NEXT STEPS" -ForegroundColor Cyan
-        Write-Host "=" * 80 -ForegroundColor Cyan
+        Write-Host ("=" * 80) -ForegroundColor Cyan
         Write-Host ""
         
         Write-Host "1. Configure Cisco device credentials:" -ForegroundColor White
-        Write-Host "   Run as the service account ($($serviceAccountCred.UserName)):" -ForegroundColor Gray
         Write-Host ""
+        Write-Host "   The service account ($($serviceAccountCred.UserName)) runs the scheduled task." -ForegroundColor White
+        Write-Host ""
+        Write-Host "   Device authentication options:" -ForegroundColor Cyan
+        Write-Host "   a) Use DIFFERENT credentials for device access (local/TACACS+/RADIUS)" -ForegroundColor Gray
+        Write-Host "      - You'll configure separate username/password for Cisco devices" -ForegroundColor DarkGray
+        Write-Host "   b) Use the SAME service account (if RADIUS/TACACS+ is configured)" -ForegroundColor Gray
+        Write-Host "      - The service account credentials will authenticate to devices" -ForegroundColor DarkGray
+        Write-Host ""
+        Write-Host "   Credentials will be encrypted and saved to:" -ForegroundColor White
+        Write-Host "   $InstallPath\.cisco_credentials" -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "   Choose ONE method to save credentials:" -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "   METHOD 1 - Using runas (recommended):" -ForegroundColor Cyan
+        Write-Host "   ----------------------------------------" -ForegroundColor Cyan
         Write-Host "   runas /user:$($serviceAccountCred.UserName) powershell.exe" -ForegroundColor DarkGray
         Write-Host ""
-        Write-Host "   Then in the service account PowerShell window:" -ForegroundColor Gray
+        Write-Host "   Then in the new PowerShell window:" -ForegroundColor Gray
         Write-Host "   cd `"$InstallPath`"" -ForegroundColor DarkGray
         Write-Host "   .\python.exe $script:PythonScriptName --save-credentials" -ForegroundColor DarkGray
         Write-Host ""
+        Write-Host "   METHOD 2 - Using PsExec (if runas is restricted):" -ForegroundColor Cyan
+        Write-Host "   --------------------------------------------------" -ForegroundColor Cyan
+        Write-Host "   cd `"$InstallPath\Utils\PsTools`"" -ForegroundColor DarkGray
+        Write-Host "   .\PsExec.exe -u $($serviceAccountCred.UserName) -p * -i powershell.exe" -ForegroundColor DarkGray
+        Write-Host ""
+        Write-Host "   Then in the new PowerShell window:" -ForegroundColor Gray
+        Write-Host "   cd `"$InstallPath`"" -ForegroundColor DarkGray
+        Write-Host "   .\python.exe $script:PythonScriptName --save-credentials" -ForegroundColor DarkGray
+        Write-Host ""
+        Write-Host "   You will be prompted to enter:" -ForegroundColor White
+        Write-Host "   - Username for Cisco device authentication" -ForegroundColor Gray
+        Write-Host "   - Password for Cisco device authentication" -ForegroundColor Gray
+        Write-Host "   - Enable password (if required for privilege level 15)" -ForegroundColor Gray
+        Write-Host ""
         
         $devicesFilePath = Join-Path $InstallPath "devices.txt"
+        $credFilePath = Join-Path $InstallPath ".cisco_credentials"
+        
+        Write-Host "2. Verify credentials were saved:" -ForegroundColor White
+        Write-Host "   Test-Path `"$credFilePath`"" -ForegroundColor Gray
+        Write-Host "   (Should return: True)" -ForegroundColor DarkGray
+        Write-Host ""
+        
         if ($isDiscoveryMode) {
-            Write-Host "2. Test the collection manually (as the service account):" -ForegroundColor White
-            Write-Host "   cd `"$InstallPath`"" -ForegroundColor Gray
-            Write-Host "   .\python.exe $script:PythonScriptName --discover" -ForegroundColor Gray
+            Write-Host "3. Test the collection manually (as the service account):" -ForegroundColor White
+            Write-Host "   Using the same runas/PsExec method from step 1:" -ForegroundColor Gray
+            Write-Host "   cd `"$InstallPath`"" -ForegroundColor DarkGray
+            Write-Host "   .\python.exe $script:PythonScriptName --discover" -ForegroundColor DarkGray
         }
         elseif (Test-Path $devicesFilePath) {
-            Write-Host "2. Verify the device list file was created correctly:" -ForegroundColor White
+            Write-Host "3. Verify the device list file was created correctly:" -ForegroundColor White
             Write-Host "   type `"$devicesFilePath`"" -ForegroundColor Gray
             Write-Host "   (Should contain the device IPs/hostnames you specified)" -ForegroundColor DarkGray
             Write-Host ""
-            Write-Host "3. Test the collection manually (as the service account):" -ForegroundColor White
-            Write-Host "   cd `"$InstallPath`"" -ForegroundColor Gray
-            Write-Host "   .\python.exe $script:PythonScriptName -f devices.txt" -ForegroundColor Gray
+            Write-Host "4. Test the collection manually (as the service account):" -ForegroundColor White
+            Write-Host "   Using the same runas/PsExec method from step 1:" -ForegroundColor Gray
+            Write-Host "   cd `"$InstallPath`"" -ForegroundColor DarkGray
+            Write-Host "   .\python.exe $script:PythonScriptName -f devices.txt" -ForegroundColor DarkGray
         }
         else {
-            Write-Host "2. Verify your device list file contains the correct devices" -ForegroundColor White
+            Write-Host "3. Verify your device list file contains the correct devices" -ForegroundColor White
             Write-Host ""
-            Write-Host "3. Test the collection manually (as the service account):" -ForegroundColor White
-            Write-Host "   cd `"$InstallPath`"" -ForegroundColor Gray
-            Write-Host "   .\python.exe $script:PythonScriptName -f <your_device_file>" -ForegroundColor Gray
+            Write-Host "4. Test the collection manually (as the service account):" -ForegroundColor White
+            Write-Host "   Using the same runas/PsExec method from step 1:" -ForegroundColor Gray
+            Write-Host "   cd `"$InstallPath`"" -ForegroundColor DarkGray
+            Write-Host "   .\python.exe $script:PythonScriptName -f <your_device_file>" -ForegroundColor DarkGray
         }
         Write-Host ""
         
         if (-not $SkipTaskCreation -and $ScheduleType -ne 'None') {
-            $lastStep = if ($isDiscoveryMode) { "3" } else { "4" }
+            $lastStep = if ($isDiscoveryMode) { "4" } else { "5" }
             Write-Host "$lastStep. Verify scheduled task configuration:" -ForegroundColor White
             Write-Host "   Get-ScheduledTask -TaskName '$script:TaskName' | Select-Object TaskName,State" -ForegroundColor Gray
             Write-Host "   Get-ScheduledTask -TaskName '$script:TaskName' | Select-Object -ExpandProperty Principal" -ForegroundColor Gray
             Write-Host ""
         }
         
-        Write-Host "=" * 80 -ForegroundColor Yellow
+        Write-Host ("=" * 80) -ForegroundColor Yellow
         Write-Host "IMPORTANT SECURITY NOTES" -ForegroundColor Yellow
-        Write-Host "=" * 80 -ForegroundColor Yellow
+        Write-Host ("=" * 80) -ForegroundColor Yellow
         Write-Host ""
-        Write-Host "• The Python script will FAIL if the scheduled task is changed to run as SYSTEM" -ForegroundColor Red
-        Write-Host "• Always use the dedicated service account: $($serviceAccountCred.UserName)" -ForegroundColor Yellow
-        Write-Host "• Credentials are stored securely in Windows Credential Manager" -ForegroundColor White
-        Write-Host "• Only the service account that saved credentials can access them" -ForegroundColor White
+        Write-Host "SERVICE ACCOUNT USAGE:" -ForegroundColor Cyan
+        Write-Host "  - Service Account ($($serviceAccountCred.UserName)): Runs the scheduled task" -ForegroundColor White
+        Write-Host "  - Device Credentials: Can be different OR the same as service account" -ForegroundColor White
+        Write-Host "    * Different: Configure separate local/TACACS+/RADIUS credentials" -ForegroundColor Gray
+        Write-Host "    * Same: Use service account if RADIUS/TACACS+ AAA is configured" -ForegroundColor Gray
         Write-Host ""
-        Write-Host "=" * 80 -ForegroundColor Yellow
+        Write-Host "CREDENTIAL STORAGE:" -ForegroundColor Cyan
+        Write-Host "  - Encrypted credentials file: $InstallPath\.cisco_credentials" -ForegroundColor White
+        Write-Host "  - Only readable by the service account that created it" -ForegroundColor White
+        Write-Host "  - Must be created using runas or PsExec as the service account" -ForegroundColor White
+        Write-Host ""
+        Write-Host "REQUIREMENTS:" -ForegroundColor Cyan
+        Write-Host "  - The Python script will FAIL if task is changed to run as SYSTEM" -ForegroundColor Red
+        Write-Host "  - Always use service account: $($serviceAccountCred.UserName)" -ForegroundColor Yellow
+        Write-Host "  - Credentials encrypted with Windows DPAPI (user-specific)" -ForegroundColor White
+        Write-Host ""
+        Write-Host ("=" * 80) -ForegroundColor Yellow
         Write-Host ""
         
     }
