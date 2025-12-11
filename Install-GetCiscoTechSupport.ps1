@@ -530,12 +530,18 @@ function Uninstall-CiscoCollector {
         Write-Host "Saved credentials and output files will NOT be removed" -ForegroundColor White
         Write-Host "      (These must be manually deleted if needed)" -ForegroundColor Gray
         Write-Host ""
-        
-        $confirmation = Read-Host "Type 'YES' to confirm uninstallation"
-        
+
+        $confirmation = Read-Host "Type YES in UPPERCASE to confirm uninstallation"
+
         if ($confirmation -cne 'YES') {
-            Write-InstallLog -Message "Uninstallation cancelled by user" -Level WARNING
-            Write-Host "`nUninstallation cancelled" -ForegroundColor Yellow
+            if ($confirmation -eq 'yes') {
+                Write-Host "`nUninstallation cancelled - 'YES' must be in UPPERCASE" -ForegroundColor Red
+                Write-InstallLog -Message "Uninstallation cancelled - incorrect case" -Level WARNING
+            }
+            else {
+                Write-Host "`nUninstallation cancelled" -ForegroundColor Yellow
+                Write-InstallLog -Message "Uninstallation cancelled by user" -Level WARNING
+            }
             return
         }
         
