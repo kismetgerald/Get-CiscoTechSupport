@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-
-# region Header and Description
-
+#
 # ==============================================================================
 # Cisco Tech-Support Collector
 # ==============================================================================
@@ -22,7 +20,7 @@
 #     December 4, 2025
 #
 # LAST UPDATED:
-#     December 9, 2025
+#     December 10, 2025
 #
 # DEPENDENCIES:
 #     - Python 3.6+
@@ -143,8 +141,6 @@
 #
 # ==============================================================================
 #
-
-# endregion
 
 # region Imports and Configuration
 
@@ -279,13 +275,13 @@ class CredentialManager:
     def __init__(self, credentials_file=CREDENTIALS_FILE):
         self.credentials_file = credentials_file
         
-    def get_credentials(self, username=None, password=None, enable_secret=None):
+    def get_credentials(self, username=None, password=None, enable_secret=None, non_interactive=False):
         """
         Get credentials from multiple sources in order of preference:
         1. Provided arguments
         2. Environment variables (if USE_ENV_VARIABLES is True)
         3. Encrypted credentials file
-        4. Interactive prompt
+        4. Interactive prompt (only if non_interactive=False)
         """
         creds = {
             'username': username,
@@ -310,7 +306,21 @@ class CredentialManager:
                 creds['password'] = creds['password'] or file_creds.get('password')
                 creds['enable_secret'] = creds['enable_secret'] or file_creds.get('enable_secret')
         
-        # Interactive prompt for missing credentials
+        # Check if we're in non-interactive mode (scheduled task) and still missing credentials
+        if non_interactive:
+            if not creds['username'] or not creds['password']:
+                raise ValueError(
+                    "Cannot run in non-interactive mode without credentials. "
+                    "Provide credentials via: command-line arguments (-u/-p), "
+                    "environment variables (CISCO_USERNAME/CISCO_PASSWORD), "
+                    "or saved credentials file (run with --save-credentials first)."
+                )
+            # Set enable secret to password if not provided
+            if not creds['enable_secret']:
+                creds['enable_secret'] = creds['password']
+            return creds
+        
+        # Interactive prompt for missing credentials (only in interactive mode)
         if not creds['username']:
             creds['username'] = input("Enter username: ")
         
@@ -834,6 +844,28 @@ class CiscoCollector:
 
 # region Helper Functions
 
+def setup_early_logging():
+    """Setup logging as early as possible before any operations"""
+    script_dir = Path(__file__).parent.resolve()
+    logs_dir = script_dir / 'Logs'
+    
+    # Create Logs directory if it doesn't exist
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    
+    log_file = logs_dir / DEFAULT_LOG_FILE
+    
+    # Configure basic logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_file),
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
+    
+    return logging.getLogger(__name__)
+
 def load_devices_from_file(filepath):
     """Load device list from text file (one IP per line)"""
     devices = []
@@ -854,6 +886,12 @@ def load_devices_from_file(filepath):
 # region Main Function
 
 def main():
+    # Setup logging FIRST - before any other operations
+    early_logger = setup_early_logging()
+    early_logger.info("="*60)
+    early_logger.info("Cisco Tech-Support Collector Starting")
+    early_logger.info("="*60)
+    
     parser = argparse.ArgumentParser(
         description='Collect tech-support from Cisco devices',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -948,17 +986,23 @@ Examples:
     parser.add_argument('--offline-log', default=DEFAULT_OFFLINE_LOG, help='Offline hosts log file')
     parser.add_argument('-w', '--workers', type=int, default=DEFAULT_MAX_WORKERS,
                        help=f'Number of concurrent connections (default: {DEFAULT_MAX_WORKERS})')
+    parser.add_argument('--non-interactive', action='store_true',
+                       help='Run in non-interactive mode (for scheduled tasks) - will fail if credentials not available')
     
     args = parser.parse_args()
+    
+    early_logger.info(f"Running in {'non-interactive' if args.non_interactive else 'interactive'} mode")
     
     # Handle credential management (doesn't require netmiko/pysnmp)
     cred_manager = CredentialManager(credentials_file=args.credentials_file)
     
     if args.delete_credentials:
+        early_logger.info("Deleting saved credentials")
         cred_manager.delete_credentials()
         return
     
     if args.save_credentials:
+        early_logger.info("Saving credentials")
         print("Save Credentials")
         print("=" * 50)
         username = input("Enter username: ")
@@ -974,28 +1018,51 @@ Examples:
     
     # Check for required libraries for device operations
     if not NETMIKO_AVAILABLE or not PYSNMP_AVAILABLE:
-        print("ERROR: Required libraries not installed for device operations.")
+        error_msg = "ERROR: Required libraries not installed for device operations."
+        early_logger.error(error_msg)
+        print(error_msg)
         missing = []
         if not NETMIKO_AVAILABLE:
             missing.append("netmiko")
             if 'NETMIKO_IMPORT_ERROR' in globals():
+                early_logger.error(f"Netmiko import error: {NETMIKO_IMPORT_ERROR}")
                 print(f"Netmiko import error: {NETMIKO_IMPORT_ERROR}")
         if not PYSNMP_AVAILABLE:
             missing.append("pysnmp")
             if 'PYSNMP_IMPORT_ERROR' in globals():
+                early_logger.error(f"PySNMP import error: {PYSNMP_IMPORT_ERROR}")
                 print(f"PySNMP import error: {PYSNMP_IMPORT_ERROR}")
         print(f"Please run: pip install {' '.join(missing)}")
         sys.exit(1)
     
-    # Get credentials
-    creds = cred_manager.get_credentials(args.username, args.password, args.enable)
+    # Get credentials with non-interactive flag
+    try:
+        creds = cred_manager.get_credentials(
+            args.username, 
+            args.password, 
+            args.enable, 
+            non_interactive=args.non_interactive
+        )
+        early_logger.info(f"Credentials obtained for user: {creds['username']}")
+    except ValueError as e:
+        early_logger.error(f"Credential error: {e}")
+        print(f"ERROR: {e}")
+        sys.exit(1)
+    except Exception as e:
+        early_logger.error(f"Unexpected error getting credentials: {e}")
+        print(f"ERROR: {e}")
+        sys.exit(1)
     
     # Require at least one input method
     if not any([args.devices, args.file, args.discover]):
-        parser.error("Must specify one of: --devices, --file, or --discover")
+        error_msg = "Must specify one of: --devices, --file, or --discover"
+        early_logger.error(error_msg)
+        parser.error(error_msg)
     
     # Show OS detection info
-    print(f"Detected OS: {platform.system()} {platform.release()}")
+    os_info = f"{platform.system()} {platform.release()}"
+    early_logger.info(f"Detected OS: {os_info}")
+    print(f"Detected OS: {os_info}")
     
     # Initialize collector with custom settings
     collector = CiscoCollector(
