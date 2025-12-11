@@ -533,7 +533,7 @@ function Uninstall-CiscoCollector {
         
         $confirmation = Read-Host "Type 'YES' to confirm uninstallation"
         
-        if ($confirmation -ne 'YES') {
+        if ($confirmation -cne 'YES') {
             Write-InstallLog -Message "Uninstallation cancelled by user" -Level WARNING
             Write-Host "`nUninstallation cancelled" -ForegroundColor Yellow
             return
@@ -598,21 +598,34 @@ function Uninstall-CiscoCollector {
         Write-Host ""
         Write-Host "The following items were NOT automatically removed and may require manual cleanup:" -ForegroundColor Yellow
         Write-Host ""
-        Write-Host "1. Saved Credentials:" -ForegroundColor White
-        Write-Host "   Location: $InstallPath\.cisco_credentials" -ForegroundColor Gray
-        Write-Host "   (Encrypted credentials file - can only be read by service account)" -ForegroundColor Gray
-        Write-Host ""
-        Write-Host "2. Output Files:" -ForegroundColor White
+
+        $itemNumber = 1
+
+        if ($componentsFailed -contains "Installation Directory") {
+            Write-Host "$itemNumber. Saved Credentials:" -ForegroundColor White
+            Write-Host "   Location: $InstallPath\.cisco_credentials" -ForegroundColor Gray
+            Write-Host "   (Encrypted credentials file - can only be read by service account)" -ForegroundColor Gray
+            Write-Host "   NOTE: Installation directory removal failed, so credentials file still exists" -ForegroundColor Yellow
+            Write-Host ""
+            $itemNumber++
+        }
+
+        Write-Host "$itemNumber. Output Files:" -ForegroundColor White
         Write-Host "   Location: Previously configured output directory" -ForegroundColor Gray
         Write-Host "   Contains: Collected tech-support files" -ForegroundColor Gray
         Write-Host ""
-        Write-Host "3. Log Files:" -ForegroundColor White
+        $itemNumber++
+
+        Write-Host "$itemNumber. Log Files:" -ForegroundColor White
         Write-Host "   Location: $script:LogFile" -ForegroundColor Gray
         Write-Host ""
-        Write-Host "4. Service Account:" -ForegroundColor White
+        $itemNumber++
+
+        Write-Host "$itemNumber. Service Account:" -ForegroundColor White
         Write-Host "   If a dedicated service account was created, it can be disabled/removed" -ForegroundColor Gray
         Write-Host "   from Active Directory or local user accounts" -ForegroundColor Gray
         Write-Host ""
+
         Write-Host ("=" * 80) -ForegroundColor Cyan
         Write-Host ""
         
