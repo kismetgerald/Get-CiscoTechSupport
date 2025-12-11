@@ -14,13 +14,13 @@
 #     Kismet Agbasi (Github: kismetgerald Email: KismetG17@gmail.com)
 #     
 # VERSION:
-#     1.0.0-alpha
+#     1.0.0-alpha2
 #
 # CREATED:
 #     December 4, 2025
 #
 # LAST UPDATED:
-#     December 7, 2025
+#     December 10, 2025
 #
 # DEPENDENCIES:
 #     - Python 3.6+
@@ -115,8 +115,8 @@
 #     Example: CORE-SW1_10.1.1.1_20241204_143022_tech-support.txt
 #
 # LOGS:
-#     - collection.log: Main activity log
-#     - hosts_offline.log: Failed/unreachable devices
+#     - Logs/collection.log: Main activity log
+#     - Logs/hosts_offline.log: Failed/unreachable devices
 #
 # ERROR HANDLING:
 #     - Connection timeouts: Logged and skipped
@@ -141,6 +141,8 @@
 #
 # ==============================================================================
 #
+
+# region Imports and Configuration
 
 # ============================================================================
 # CONFIGURATION SECTION - Modify these variables as needed
@@ -199,6 +201,10 @@ import re
 import getpass
 import json
 from base64 import b64encode, b64decode
+
+# endregion
+
+# region Library Imports and Availability Checks
 
 try:
     from netmiko import ConnectHandler, NetmikoTimeoutException, NetmikoAuthenticationException
@@ -259,6 +265,9 @@ IS_WINDOWS = platform.system() == 'Windows'
 IS_LINUX = platform.system() == 'Linux'
 IS_MAC = platform.system() == 'Darwin'
 
+# endregion
+
+# region Credential Manager Class
 
 class CredentialManager:
     """Manage credentials securely using multiple methods"""
@@ -266,13 +275,13 @@ class CredentialManager:
     def __init__(self, credentials_file=CREDENTIALS_FILE):
         self.credentials_file = credentials_file
         
-    def get_credentials(self, username=None, password=None, enable_secret=None):
+    def get_credentials(self, username=None, password=None, enable_secret=None, non_interactive=False):
         """
         Get credentials from multiple sources in order of preference:
         1. Provided arguments
         2. Environment variables (if USE_ENV_VARIABLES is True)
         3. Encrypted credentials file
-        4. Interactive prompt
+        4. Interactive prompt (only if non_interactive=False)
         """
         creds = {
             'username': username,
@@ -297,7 +306,21 @@ class CredentialManager:
                 creds['password'] = creds['password'] or file_creds.get('password')
                 creds['enable_secret'] = creds['enable_secret'] or file_creds.get('enable_secret')
         
-        # Interactive prompt for missing credentials
+        # Check if we're in non-interactive mode (scheduled task) and still missing credentials
+        if non_interactive:
+            if not creds['username'] or not creds['password']:
+                raise ValueError(
+                    "Cannot run in non-interactive mode without credentials. "
+                    "Provide credentials via: command-line arguments (-u/-p), "
+                    "environment variables (CISCO_USERNAME/CISCO_PASSWORD), "
+                    "or saved credentials file (run with --save-credentials first)."
+                )
+            # Set enable secret to password if not provided
+            if not creds['enable_secret']:
+                creds['enable_secret'] = creds['password']
+            return creds
+        
+        # Interactive prompt for missing credentials (only in interactive mode)
         if not creds['username']:
             creds['username'] = input("Enter username: ")
         
@@ -407,6 +430,9 @@ class CredentialManager:
         key = b64encode(kdf.derive(password.encode()))
         return key
 
+# endregion
+
+# region Cisco Collector Class
 
 class CiscoCollector:
     def __init__(self, username, password, enable_secret=None, output_dir=None, 
@@ -426,8 +452,10 @@ class CiscoCollector:
             output_dir = self.get_default_output_dir()
         
         self.output_dir = Path(output_dir)
-        self.log_file = log_file
-        self.offline_log = offline_log
+        
+        # Set log file paths to Logs subfolder
+        self.log_file = self.get_log_path(log_file)
+        self.offline_log = self.get_log_path(offline_log)
         
         # Setup logging
         self.setup_logging()
@@ -450,6 +478,17 @@ class CiscoCollector:
         default_results_dir = script_dir / 'Results'
         
         return str(default_results_dir)
+    
+    @staticmethod
+    def get_log_path(log_filename):
+        """Get full path for log file in Logs subfolder"""
+        script_dir = Path(__file__).parent.resolve()
+        logs_dir = script_dir / 'Logs'
+        
+        # Create Logs directory if it doesn't exist
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        
+        return str(logs_dir / log_filename)
         
     def setup_logging(self):
         """Configure logging for the application"""
@@ -468,6 +507,8 @@ class CiscoCollector:
         with open(self.offline_log, 'a') as f:
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             f.write(f"{timestamp} - {host} - {reason}\n")
+    
+    # region Device Discovery Methods
     
     def snmp_discover_devices(self, subnet, snmp_version='2c', community='public',
                              v3_user=None, v3_auth_protocol='SHA', v3_auth_pass=None,
@@ -702,6 +743,10 @@ class CiscoCollector:
             
         return list(set(devices))  # Remove duplicates
     
+    # endregion
+    
+    # region Device Connection and Collection Methods
+    
     def connect_and_collect(self, device_ip):
         """Connect to a device and collect tech-support output"""
         self.logger.info(f"Connecting to {device_ip}")
@@ -792,7 +837,34 @@ class CiscoCollector:
                 results.append(result)
         
         return results
+    
+    # endregion
 
+# endregion
+
+# region Helper Functions
+
+def setup_early_logging():
+    """Setup logging as early as possible before any operations"""
+    script_dir = Path(__file__).parent.resolve()
+    logs_dir = script_dir / 'Logs'
+    
+    # Create Logs directory if it doesn't exist
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    
+    log_file = logs_dir / DEFAULT_LOG_FILE
+    
+    # Configure basic logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_file),
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
+    
+    return logging.getLogger(__name__)
 
 def load_devices_from_file(filepath):
     """Load device list from text file (one IP per line)"""
@@ -809,8 +881,17 @@ def load_devices_from_file(filepath):
     
     return devices
 
+# endregion
+
+# region Main Function
 
 def main():
+    # Setup logging FIRST - before any other operations
+    early_logger = setup_early_logging()
+    early_logger.info("="*60)
+    early_logger.info("Cisco Tech-Support Collector Starting")
+    early_logger.info("="*60)
+    
     parser = argparse.ArgumentParser(
         description='Collect tech-support from Cisco devices',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -905,17 +986,23 @@ Examples:
     parser.add_argument('--offline-log', default=DEFAULT_OFFLINE_LOG, help='Offline hosts log file')
     parser.add_argument('-w', '--workers', type=int, default=DEFAULT_MAX_WORKERS,
                        help=f'Number of concurrent connections (default: {DEFAULT_MAX_WORKERS})')
+    parser.add_argument('--non-interactive', action='store_true',
+                       help='Run in non-interactive mode (for scheduled tasks) - will fail if credentials not available')
     
     args = parser.parse_args()
+    
+    early_logger.info(f"Running in {'non-interactive' if args.non_interactive else 'interactive'} mode")
     
     # Handle credential management (doesn't require netmiko/pysnmp)
     cred_manager = CredentialManager(credentials_file=args.credentials_file)
     
     if args.delete_credentials:
+        early_logger.info("Deleting saved credentials")
         cred_manager.delete_credentials()
         return
     
     if args.save_credentials:
+        early_logger.info("Saving credentials")
         print("Save Credentials")
         print("=" * 50)
         username = input("Enter username: ")
@@ -931,28 +1018,51 @@ Examples:
     
     # Check for required libraries for device operations
     if not NETMIKO_AVAILABLE or not PYSNMP_AVAILABLE:
-        print("ERROR: Required libraries not installed for device operations.")
+        error_msg = "ERROR: Required libraries not installed for device operations."
+        early_logger.error(error_msg)
+        print(error_msg)
         missing = []
         if not NETMIKO_AVAILABLE:
             missing.append("netmiko")
             if 'NETMIKO_IMPORT_ERROR' in globals():
+                early_logger.error(f"Netmiko import error: {NETMIKO_IMPORT_ERROR}")
                 print(f"Netmiko import error: {NETMIKO_IMPORT_ERROR}")
         if not PYSNMP_AVAILABLE:
             missing.append("pysnmp")
             if 'PYSNMP_IMPORT_ERROR' in globals():
+                early_logger.error(f"PySNMP import error: {PYSNMP_IMPORT_ERROR}")
                 print(f"PySNMP import error: {PYSNMP_IMPORT_ERROR}")
         print(f"Please run: pip install {' '.join(missing)}")
         sys.exit(1)
     
-    # Get credentials
-    creds = cred_manager.get_credentials(args.username, args.password, args.enable)
+    # Get credentials with non-interactive flag
+    try:
+        creds = cred_manager.get_credentials(
+            args.username, 
+            args.password, 
+            args.enable, 
+            non_interactive=args.non_interactive
+        )
+        early_logger.info(f"Credentials obtained for user: {creds['username']}")
+    except ValueError as e:
+        early_logger.error(f"Credential error: {e}")
+        print(f"ERROR: {e}")
+        sys.exit(1)
+    except Exception as e:
+        early_logger.error(f"Unexpected error getting credentials: {e}")
+        print(f"ERROR: {e}")
+        sys.exit(1)
     
     # Require at least one input method
     if not any([args.devices, args.file, args.discover]):
-        parser.error("Must specify one of: --devices, --file, or --discover")
+        error_msg = "Must specify one of: --devices, --file, or --discover"
+        early_logger.error(error_msg)
+        parser.error(error_msg)
     
     # Show OS detection info
-    print(f"Detected OS: {platform.system()} {platform.release()}")
+    os_info = f"{platform.system()} {platform.release()}"
+    early_logger.info(f"Detected OS: {os_info}")
+    print(f"Detected OS: {os_info}")
     
     # Initialize collector with custom settings
     collector = CiscoCollector(
@@ -969,6 +1079,7 @@ Examples:
     )
     
     print(f"Output directory: {collector.output_dir}")
+    print(f"Log directory: {Path(collector.log_file).parent}")
     print(f"Device type: {collector.device_type}")
     print(f"Connection timeout: {collector.connection_timeout}s")
     print(f"Command timeout: {collector.command_timeout}s")
@@ -1013,10 +1124,15 @@ Examples:
     print(f"Successful: {successful}")
     print(f"Failed: {failed}")
     print(f"\nOutput directory: {collector.output_dir}")
-    print(f"Main log: {args.log_file}")
-    print(f"Offline hosts log: {args.offline_log}")
+    print(f"Main log: {collector.log_file}")
+    print(f"Offline hosts log: {collector.offline_log}")
     print("="*60)
 
+# endregion
+
+# region Script Entry Point
 
 if __name__ == '__main__':
     main()
+
+# endregion
