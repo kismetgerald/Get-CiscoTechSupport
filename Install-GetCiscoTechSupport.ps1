@@ -290,6 +290,222 @@ function Get-ServiceAccountCredential {
 }
 #endregion
 
+#region Service Account Credential Setup Functions
+function Test-SecondaryLogonService {
+    try {
+        $service = Get-Service -Name "seclogon" -ErrorAction Stop
+        return @{
+            Exists = $true
+            Status = $service.Status
+            StartType = $service.StartType
+        }
+    }
+    catch {
+        return @{
+            Exists = $false
+            Status = "NotFound"
+            StartType = "NotFound"
+        }
+    }
+}
+
+function Set-SecondaryLogonService {
+    param(
+        [Parameter(Mandatory=$true)]
+        [ValidateSet('Manual','Disabled')]
+        [string]$StartType
+    )
+    
+    try {
+        Set-Service -Name "seclogon" -StartupType $StartType -ErrorAction Stop
+        Write-InstallLog -Message "Secondary Logon service set to: $StartType" -Level INFO
+        return $true
+    }
+    catch {
+        Write-InstallLog -Message "Failed to modify Secondary Logon service: $_" -Level ERROR
+        return $false
+    }
+}
+
+function Start-ServiceAccountCredentialSetup {
+    param(
+        [Parameter(Mandatory=$true)]
+        [PSCredential]$ServiceAccountCred,
+        
+        [Parameter(Mandatory=$true)]
+        [string]$InstallPath,
+        
+        [Parameter(Mandatory=$true)]
+        [string]$PythonScript
+    )
+    
+    Write-Host "`n" -NoNewline
+    Write-Host ("=" * 80) -ForegroundColor Cyan
+    Write-Host "CISCO DEVICE CREDENTIAL SETUP" -ForegroundColor Cyan
+    Write-Host ("=" * 80) -ForegroundColor Cyan
+    Write-Host ""
+    
+    $serviceInfo = Test-SecondaryLogonService
+    
+    if (-not $serviceInfo.Exists) {
+        Write-Host "WARNING: Secondary Logon service not found" -ForegroundColor Red
+        Write-Host "Cannot automatically launch credential setup" -ForegroundColor Yellow
+        Write-InstallLog -Message "Secondary Logon service not found" -Level ERROR
+        return $false
+    }
+    
+    $originalStartType = $serviceInfo.StartType
+    $needsRestore = $false
+    
+    Write-Host "Secondary Logon Service Status:" -ForegroundColor White
+    Write-Host "  Current Status: $($serviceInfo.Status)" -ForegroundColor Gray
+    Write-Host "  Startup Type: $originalStartType" -ForegroundColor Gray
+    Write-Host ""
+    
+    if ($serviceInfo.StartType -eq 'Disabled') {
+        Write-Host "NOTICE: " -ForegroundColor Yellow -NoNewline
+        Write-Host "Secondary Logon service is DISABLED (likely due to STIG V-253289)" -ForegroundColor White
+        Write-Host ""
+        Write-Host "STIG V-253289 requires this service to be disabled for security." -ForegroundColor Gray
+        Write-Host "To configure device credentials, we need to TEMPORARILY enable it." -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "Automated Setup Process:" -ForegroundColor Cyan
+        Write-Host "  1. Set Secondary Logon to 'Manual' startup" -ForegroundColor Gray
+        Write-Host "  2. Launch PowerShell as service account: $($ServiceAccountCred.UserName)" -ForegroundColor Gray
+        Write-Host "  3. Run credential setup script (you'll be prompted for device credentials)" -ForegroundColor Gray
+        Write-Host "  4. Verify credential file creation" -ForegroundColor Gray
+        Write-Host "  5. Restore Secondary Logon to 'Disabled' (STIG compliance)" -ForegroundColor Gray
+        Write-Host ""
+        
+        $response = Read-Host "Proceed with automated credential setup? (yes/no) [yes]"
+        if ([string]::IsNullOrWhiteSpace($response)) { $response = 'yes' }
+        
+        if ($response -notmatch '^y(es)?$') {
+            Write-Host ""
+            Write-Host "Credential setup skipped - you'll need to configure manually" -ForegroundColor Yellow
+            Write-InstallLog -Message "Automated credential setup declined by user" -Level WARNING
+            return $false
+        }
+        
+        Write-Host ""
+        Write-InstallLog -Message "Temporarily enabling Secondary Logon service for credential setup" -Level INFO
+        Write-Host "Enabling Secondary Logon service..." -ForegroundColor Cyan
+        
+        if (-not (Set-SecondaryLogonService -StartType Manual)) {
+            Write-Host "Failed to enable Secondary Logon service" -ForegroundColor Red
+            Write-Host "You'll need to configure credentials manually" -ForegroundColor Yellow
+            return $false
+        }
+        
+        Write-Host "Secondary Logon service enabled" -ForegroundColor Green
+        $needsRestore = $true
+        Start-Sleep -Seconds 2
+    }
+    elseif ($serviceInfo.StartType -eq 'Manual') {
+        Write-Host "Secondary Logon service is set to 'Manual' - no changes needed" -ForegroundColor Green
+        Write-Host ""
+    }
+    else {
+        Write-Host "Secondary Logon service is enabled - proceeding with credential setup" -ForegroundColor Green
+        Write-Host ""
+    }
+    
+    $credSetupCommand = "Set-Location '$InstallPath'; Write-Host ''; Write-Host 'Cisco Device Credential Setup' -ForegroundColor Cyan; Write-Host ('=' * 50) -ForegroundColor Cyan; Write-Host ''; Write-Host 'You will be prompted for:' -ForegroundColor White; Write-Host '  - Device Username (for SSH/Telnet)' -ForegroundColor Gray; Write-Host '  - Device Password' -ForegroundColor Gray; Write-Host '  - Enable Password (for privilege 15)' -ForegroundColor Gray; Write-Host ''; & '.\python.exe' '$PythonScript' --save-credentials; Write-Host ''; Write-Host 'Setup complete. Press Enter to close this window...' -ForegroundColor Green; Read-Host"
+    
+    Write-Host ""
+    Write-Host "Launching credential setup as: $($ServiceAccountCred.UserName)" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "IMPORTANT: A new PowerShell window will open where you'll enter:" -ForegroundColor Yellow
+    Write-Host "  - Device username (for authenticating to Cisco devices)" -ForegroundColor White
+    Write-Host "  - Device password" -ForegroundColor White
+    Write-Host "  - Enable password (if required for privilege 15 access)" -ForegroundColor White
+    Write-Host ""
+    Write-Host "NOTE: These can be different from OR the same as the service account" -ForegroundColor Cyan
+    Write-Host "      depending on your RADIUS/TACACS+ configuration." -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "After completing the prompts, press Enter to close the new window." -ForegroundColor White
+    Write-Host ""
+    Write-Host "Press any key to launch the credential setup window..." -ForegroundColor Yellow
+    $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+    
+    Write-Host ""
+    
+    try {
+        $username = $ServiceAccountCred.UserName
+        $tempScriptPath = Join-Path $env:TEMP "cisco-cred-setup-$(Get-Random).ps1"
+        
+        $scriptContent = @"
+`$password = Read-Host -AsSecureString -Prompt "Enter password for $username"
+`$cred = New-Object System.Management.Automation.PSCredential('$username', `$password)
+Start-Process powershell.exe -Credential `$cred -ArgumentList '-NoExit','-Command',"$credSetupCommand" -Wait
+Remove-Item '$tempScriptPath' -Force -ErrorAction SilentlyContinue
+"@
+        
+        Set-Content -Path $tempScriptPath -Value $scriptContent -Force
+        Write-InstallLog -Message "Launching credential setup via runas" -Level INFO
+        
+        Start-Process powershell.exe -ArgumentList "-ExecutionPolicy Bypass -File `"$tempScriptPath`"" -Wait
+        
+        Write-Host ""
+        Write-Host "Credential setup process completed" -ForegroundColor Green
+        Write-InstallLog -Message "Credential setup process finished" -Level SUCCESS
+        
+    }
+    catch {
+        Write-Host "Error during credential setup: $_" -ForegroundColor Red
+        Write-InstallLog -Message "Credential setup failed: $_" -Level ERROR
+    }
+    finally {
+        if ($needsRestore) {
+            Write-Host ""
+            Write-Host "Restoring STIG compliance..." -ForegroundColor Cyan
+            Write-InstallLog -Message "Restoring Secondary Logon service to Disabled" -Level INFO
+            
+            if (Set-SecondaryLogonService -StartType Disabled) {
+                Write-Host "Secondary Logon service restored to 'Disabled' (STIG compliant)" -ForegroundColor Green
+                Write-InstallLog -Message "Secondary Logon service restored to Disabled successfully" -Level SUCCESS
+            }
+            else {
+                Write-Host "WARNING: Failed to restore Secondary Logon service to 'Disabled'" -ForegroundColor Red
+                Write-Host "MANUAL ACTION REQUIRED: Disable the service to maintain STIG compliance" -ForegroundColor Yellow
+                Write-Host "Run: Set-Service -Name seclogon -StartupType Disabled" -ForegroundColor Yellow
+                Write-InstallLog -Message "Failed to restore Secondary Logon service - manual intervention required" -Level ERROR
+            }
+        }
+    }
+    
+    Start-Sleep -Seconds 2
+    
+    $credFile = Join-Path $InstallPath ".cisco_credentials"
+    Write-Host ""
+    Write-Host "Verifying credential file..." -ForegroundColor Cyan
+    
+    if (Test-Path $credFile) {
+        $fileInfo = Get-Item $credFile
+        if ($fileInfo.Length -gt 0) {
+            Write-Host "SUCCESS: Credential file created and verified" -ForegroundColor Green
+            Write-Host "  Location: $credFile" -ForegroundColor Gray
+            Write-Host "  Size: $($fileInfo.Length) bytes" -ForegroundColor Gray
+            Write-Host "  Created: $($fileInfo.CreationTime)" -ForegroundColor Gray
+            Write-InstallLog -Message "Credential file verified: $credFile ($($fileInfo.Length) bytes)" -Level SUCCESS
+            return $true
+        }
+        else {
+            Write-Host "WARNING: Credential file exists but is EMPTY" -ForegroundColor Yellow
+            Write-Host "The credential setup may not have completed successfully" -ForegroundColor Yellow
+            Write-InstallLog -Message "Credential file is empty - setup may have failed" -Level WARNING
+            return $false
+        }
+    }
+    else {
+        Write-Host "WARNING: Credential file was NOT created" -ForegroundColor Yellow
+        Write-Host "The credential setup did not complete successfully" -ForegroundColor Yellow
+        Write-InstallLog -Message "Credential file not found after setup attempt" -Level WARNING
+        return $false
+    }
+}
+#endregion
+
 #region Python Validation Functions
 function Test-EmbeddedPython {
     param([string]$InstallPath)
@@ -883,6 +1099,25 @@ function Install-CiscoCollector {
             Write-InstallLog -Message "Scheduled task creation skipped" -Level INFO
         }
 
+        # Automated credential setup
+        $credSetupSuccess = $false
+        if (-not $SkipTaskCreation -and $ScheduleType -ne 'None') {
+            $credSetupSuccess = Start-ServiceAccountCredentialSetup -ServiceAccountCred $serviceAccountCred `
+                                                                     -InstallPath $InstallPath `
+                                                                     -PythonScript $script:PythonScriptName
+            
+            if (-not $credSetupSuccess) {
+                Write-Host ""
+                Write-Host ("=" * 80) -ForegroundColor Yellow
+                Write-Host "MANUAL CREDENTIAL SETUP REQUIRED" -ForegroundColor Yellow
+                Write-Host ("=" * 80) -ForegroundColor Yellow
+                Write-Host ""
+                Write-Host "Automated credential setup failed or was skipped." -ForegroundColor White
+                Write-Host "You'll need to follow the manual instructions in the NEXT STEPS section." -ForegroundColor White
+                Write-Host ""
+            }
+        }
+
         Write-LogSection "INSTALLATION COMPLETE"
         Write-InstallLog -Message "Installation Path: $InstallPath" -Level SUCCESS
         Write-InstallLog -Message "Python Script: $scriptPath" -Level SUCCESS
@@ -892,6 +1127,13 @@ function Install-CiscoCollector {
             Write-InstallLog -Message "Scheduled Task: $script:TaskName" -Level SUCCESS
             Write-InstallLog -Message "Schedule: $ScheduleType at $ScheduleTime" -Level SUCCESS
             Write-InstallLog -Message "Service Account: $($serviceAccountCred.UserName)" -Level SUCCESS
+            
+            if ($credSetupSuccess) {
+                Write-InstallLog -Message "Device Credentials: Configured" -Level SUCCESS
+            }
+            else {
+                Write-InstallLog -Message "Device Credentials: Manual setup required" -Level WARNING
+            }
         }
         
         Write-Host "`n" -NoNewline
@@ -904,81 +1146,117 @@ function Install-CiscoCollector {
         Write-Host ("=" * 80) -ForegroundColor Cyan
         Write-Host ""
         
-        Write-Host "1. Configure Cisco device credentials:" -ForegroundColor White
-        Write-Host ""
-        Write-Host "   The service account ($($serviceAccountCred.UserName)) runs the scheduled task." -ForegroundColor White
-        Write-Host ""
-        Write-Host "   Device authentication options:" -ForegroundColor Cyan
-        Write-Host "   a) Use DIFFERENT credentials for device access (local/TACACS+/RADIUS)" -ForegroundColor Gray
-        Write-Host "      - You'll configure separate username/password for Cisco devices" -ForegroundColor DarkGray
-        Write-Host "   b) Use the SAME service account (if RADIUS/TACACS+ is configured)" -ForegroundColor Gray
-        Write-Host "      - The service account credentials will authenticate to devices" -ForegroundColor DarkGray
-        Write-Host ""
-        Write-Host "   Credentials will be encrypted and saved to:" -ForegroundColor White
-        Write-Host "   $InstallPath\.cisco_credentials" -ForegroundColor Gray
-        Write-Host ""
-        Write-Host "   Choose ONE method to save credentials:" -ForegroundColor Yellow
-        Write-Host ""
-        Write-Host "   METHOD 1 - Using runas (recommended):" -ForegroundColor Cyan
-        Write-Host "   ----------------------------------------" -ForegroundColor Cyan
-        Write-Host "   runas /user:$($serviceAccountCred.UserName) powershell.exe" -ForegroundColor DarkGray
-        Write-Host ""
-        Write-Host "   Then in the new PowerShell window:" -ForegroundColor Gray
-        Write-Host "   cd `"$InstallPath`"" -ForegroundColor DarkGray
-        Write-Host "   .\python.exe $script:PythonScriptName --save-credentials" -ForegroundColor DarkGray
-        Write-Host ""
-        Write-Host "   METHOD 2 - Using PsExec (if runas is restricted):" -ForegroundColor Cyan
-        Write-Host "   --------------------------------------------------" -ForegroundColor Cyan
-        Write-Host "   cd `"$InstallPath\Utils\PsTools`"" -ForegroundColor DarkGray
-        Write-Host "   .\PsExec.exe -u $($serviceAccountCred.UserName) -p * -i powershell.exe" -ForegroundColor DarkGray
-        Write-Host ""
-        Write-Host "   Then in the new PowerShell window:" -ForegroundColor Gray
-        Write-Host "   cd `"$InstallPath`"" -ForegroundColor DarkGray
-        Write-Host "   .\python.exe $script:PythonScriptName --save-credentials" -ForegroundColor DarkGray
-        Write-Host ""
-        Write-Host "   You will be prompted to enter:" -ForegroundColor White
-        Write-Host "   - Username for Cisco device authentication" -ForegroundColor Gray
-        Write-Host "   - Password for Cisco device authentication" -ForegroundColor Gray
-        Write-Host "   - Enable password (if required for privilege level 15)" -ForegroundColor Gray
-        Write-Host ""
-        
         $devicesFilePath = Join-Path $InstallPath "devices.txt"
         $credFilePath = Join-Path $InstallPath ".cisco_credentials"
         
-        Write-Host "2. Verify credentials were saved:" -ForegroundColor White
-        Write-Host "   Test-Path `"$credFilePath`"" -ForegroundColor Gray
-        Write-Host "   (Should return: True)" -ForegroundColor DarkGray
-        Write-Host ""
+        $stepNumber = 1
         
+        # Step 1: Credential setup (conditional based on automated setup success)
+        if ($credSetupSuccess) {
+            Write-Host "$stepNumber. Cisco device credentials: CONFIGURED" -ForegroundColor Green
+            Write-Host "   Credential file: $credFilePath" -ForegroundColor Gray
+            Write-Host "   Status: Ready for use" -ForegroundColor Gray
+            Write-Host ""
+            $stepNumber++
+        }
+        else {
+            Write-Host "$stepNumber. Configure Cisco device credentials (REQUIRED):" -ForegroundColor White
+            Write-Host ""
+            Write-Host "   The service account ($($serviceAccountCred.UserName)) runs the scheduled task." -ForegroundColor White
+            Write-Host ""
+            Write-Host "   Device authentication options:" -ForegroundColor Cyan
+            Write-Host ""
+            Write-Host "   a) Use DIFFERENT credentials for device access (local/TACACS+/RADIUS)" -ForegroundColor Gray
+            Write-Host "      - You'll configure separate username/password for Cisco devices" -ForegroundColor DarkGray
+            Write-Host ""
+            Write-Host "   b) Use the SAME service account (if RADIUS/TACACS+ is configured)" -ForegroundColor Gray
+            Write-Host "      - The service account credentials will authenticate to devices" -ForegroundColor DarkGray
+            Write-Host ""
+            Write-Host "   Credentials will be encrypted and saved to:" -ForegroundColor White
+            Write-Host "   $credFilePath" -ForegroundColor Gray
+            Write-Host ""
+            Write-Host "   Choose ONE method to save credentials:" -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "   METHOD 1 - Using runas (recommended):" -ForegroundColor Cyan
+            Write-Host "   ----------------------------------------" -ForegroundColor Cyan
+            Write-Host "   # Enable Secondary Logon if disabled (STIG compliance)" -ForegroundColor DarkGray
+            Write-Host "   Set-Service -Name seclogon -StartupType Manual" -ForegroundColor DarkGray
+            Write-Host ""
+            Write-Host "   runas /user:$($serviceAccountCred.UserName) powershell.exe" -ForegroundColor DarkGray
+            Write-Host ""
+            Write-Host "   Then in the new PowerShell window:" -ForegroundColor Gray
+            Write-Host "   cd `"$InstallPath`"" -ForegroundColor DarkGray
+            Write-Host "   .\python.exe $script:PythonScriptName --save-credentials" -ForegroundColor DarkGray
+            Write-Host ""
+            Write-Host "   # Restore STIG compliance after credential setup" -ForegroundColor DarkGray
+            Write-Host "   Set-Service -Name seclogon -StartupType Disabled" -ForegroundColor DarkGray
+            Write-Host ""
+            Write-Host "   METHOD 2 - Using PsExec (if runas is unavailable):" -ForegroundColor Cyan
+            Write-Host "   --------------------------------------------------" -ForegroundColor Cyan
+            Write-Host "   # Enable Secondary Logon if disabled (STIG compliance)" -ForegroundColor DarkGray
+            Write-Host "   Set-Service -Name seclogon -StartupType Manual" -ForegroundColor DarkGray
+            Write-Host ""
+            Write-Host "   cd `"$InstallPath\Utils\PsTools`"" -ForegroundColor DarkGray
+            Write-Host "   .\PsExec.exe -u $($serviceAccountCred.UserName) -p * -i powershell.exe" -ForegroundColor DarkGray
+            Write-Host ""
+            Write-Host "   Then in the new PowerShell window:" -ForegroundColor Gray
+            Write-Host "   cd `"$InstallPath`"" -ForegroundColor DarkGray
+            Write-Host "   .\python.exe $script:PythonScriptName --save-credentials" -ForegroundColor DarkGray
+            Write-Host ""
+            Write-Host "   # Restore STIG compliance after credential setup" -ForegroundColor DarkGray
+            Write-Host "   Set-Service -Name seclogon -StartupType Disabled" -ForegroundColor DarkGray
+            Write-Host ""
+            Write-Host "   You will be prompted to enter:" -ForegroundColor White
+            Write-Host ""
+            Write-Host "   - Username for Cisco device authentication" -ForegroundColor Gray
+            Write-Host "   - Password for Cisco device authentication" -ForegroundColor Gray
+            Write-Host "   - Enable password (if required for privilege level 15)" -ForegroundColor Gray
+            Write-Host ""
+            $stepNumber++
+        }
+        
+        # Step 2 (or 1): Verify credentials (only if automated setup succeeded)
+        if ($credSetupSuccess) {
+            Write-Host "$stepNumber. Verify credentials file:" -ForegroundColor White
+            Write-Host "   Test-Path `"$credFilePath`"" -ForegroundColor Gray
+            Write-Host "   (Should return: True)" -ForegroundColor DarkGray
+            Write-Host ""
+            $stepNumber++
+        }
+        
+        # Next step: Device list or test
         if ($isDiscoveryMode) {
-            Write-Host "3. Test the collection manually (as the service account):" -ForegroundColor White
+            Write-Host "$stepNumber. Test the collection manually (as the service account):" -ForegroundColor White
             Write-Host "   Using the same runas/PsExec method from step 1:" -ForegroundColor Gray
             Write-Host "   cd `"$InstallPath`"" -ForegroundColor DarkGray
             Write-Host "   .\python.exe $script:PythonScriptName --discover" -ForegroundColor DarkGray
         }
         elseif (Test-Path $devicesFilePath) {
-            Write-Host "3. Verify the device list file was created correctly:" -ForegroundColor White
+            Write-Host "$stepNumber. Verify the device list file was created correctly:" -ForegroundColor White
             Write-Host "   type `"$devicesFilePath`"" -ForegroundColor Gray
             Write-Host "   (Should contain the device IPs/hostnames you specified)" -ForegroundColor DarkGray
             Write-Host ""
-            Write-Host "4. Test the collection manually (as the service account):" -ForegroundColor White
-            Write-Host "   Using the same runas/PsExec method from step 1:" -ForegroundColor Gray
+            $stepNumber++
+            Write-Host "$stepNumber. Test the collection manually (as the service account):" -ForegroundColor White
+            Write-Host "   Using the same runas/PsExec method:" -ForegroundColor Gray
             Write-Host "   cd `"$InstallPath`"" -ForegroundColor DarkGray
             Write-Host "   .\python.exe $script:PythonScriptName -f devices.txt" -ForegroundColor DarkGray
         }
         else {
-            Write-Host "3. Verify your device list file contains the correct devices" -ForegroundColor White
+            Write-Host "$stepNumber. Verify your device list file contains the correct devices" -ForegroundColor White
             Write-Host ""
-            Write-Host "4. Test the collection manually (as the service account):" -ForegroundColor White
-            Write-Host "   Using the same runas/PsExec method from step 1:" -ForegroundColor Gray
+            $stepNumber++
+            Write-Host "$stepNumber. Test the collection manually (as the service account):" -ForegroundColor White
+            Write-Host "   Using the same runas/PsExec method:" -ForegroundColor Gray
             Write-Host "   cd `"$InstallPath`"" -ForegroundColor DarkGray
             Write-Host "   .\python.exe $script:PythonScriptName -f <your_device_file>" -ForegroundColor DarkGray
         }
         Write-Host ""
+        $stepNumber++
         
+        # Final step: Verify task
         if (-not $SkipTaskCreation -and $ScheduleType -ne 'None') {
-            $lastStep = if ($isDiscoveryMode) { "4" } else { "5" }
-            Write-Host "$lastStep. Verify scheduled task configuration:" -ForegroundColor White
+            Write-Host "$stepNumber. Verify scheduled task configuration:" -ForegroundColor White
             Write-Host "   Get-ScheduledTask -TaskName '$script:TaskName' | Select-Object TaskName,State" -ForegroundColor Gray
             Write-Host "   Get-ScheduledTask -TaskName '$script:TaskName' | Select-Object -ExpandProperty Principal" -ForegroundColor Gray
             Write-Host ""
@@ -995,14 +1273,18 @@ function Install-CiscoCollector {
         Write-Host "    * Same: Use service account if RADIUS/TACACS+ AAA is configured" -ForegroundColor Gray
         Write-Host ""
         Write-Host "CREDENTIAL STORAGE:" -ForegroundColor Cyan
-        Write-Host "  - Encrypted credentials file: $InstallPath\.cisco_credentials" -ForegroundColor White
+        Write-Host "  - Encrypted credentials file: $credFilePath" -ForegroundColor White
         Write-Host "  - Only readable by the service account that created it" -ForegroundColor White
-        Write-Host "  - Must be created using runas or PsExec as the service account" -ForegroundColor White
+        Write-Host "  - Encrypted using Windows DPAPI (user-specific)" -ForegroundColor White
+        Write-Host ""
+        Write-Host "STIG COMPLIANCE (V-253289):" -ForegroundColor Cyan
+        Write-Host "  - Secondary Logon service should remain DISABLED except during credential setup" -ForegroundColor White
+        Write-Host "  - If automated setup was used, service has been restored to Disabled" -ForegroundColor White
+        Write-Host "  - If manual setup is needed, remember to disable service after completing setup" -ForegroundColor Yellow
         Write-Host ""
         Write-Host "REQUIREMENTS:" -ForegroundColor Cyan
         Write-Host "  - The Python script will FAIL if task is changed to run as SYSTEM" -ForegroundColor Red
         Write-Host "  - Always use service account: $($serviceAccountCred.UserName)" -ForegroundColor Yellow
-        Write-Host "  - Credentials encrypted with Windows DPAPI (user-specific)" -ForegroundColor White
         Write-Host ""
         Write-Host ("=" * 80) -ForegroundColor Yellow
         Write-Host ""
