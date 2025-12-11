@@ -406,7 +406,7 @@ function New-CiscoCollectorTask {
     $pythonExe = Join-Path $InstallPath "python.exe"
     $scriptPath = Join-Path $InstallPath $script:PythonScriptName
     
-    $fullArguments = "`"$scriptPath`" $TaskArguments"
+    $fullArguments = "`"$scriptPath`" --non-interactive $TaskArguments"
     
     Write-InstallLog -Message "Task will execute: $pythonExe $fullArguments" -Level DEBUG
     
