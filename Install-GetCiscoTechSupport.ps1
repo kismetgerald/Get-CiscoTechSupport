@@ -1,85 +1,87 @@
 #Requires -Version 5.1
 #Requires -RunAsAdministrator
 
-#.SYNOPSIS
-#    Installation script for Cisco Tech-Support Collector
-#
-#.DESCRIPTION
-#    Extracts the Cisco Tech-Support Collector archive, validates embedded Python
-#    distribution, and creates a scheduled task for automated collection runs. 
-#    Designed for offline deployment with embedded Python distribution.
-#    
-#    IMPORTANT: This solution REQUIRES a dedicated service account. The SYSTEM
-#    account should NOT be used for production deployments due to credential
-#    management and security audit limitations.
-#
-#.PARAMETER ArchivePath
-#    Path to the downloaded .zip archive from GitHub
-#
-#.PARAMETER InstallPath
-#    Target installation directory (default: C:\Scripts\Get-CiscoTechSupport)
-#
-#.PARAMETER ScheduleType
-#    Schedule frequency: Daily, Weekly, Monthly, or None (default: Daily)
-#
-#.PARAMETER ScheduleTime
-#    Time to run the scheduled task (default: 02:00)
-#
-#.PARAMETER ServiceAccountCredential
-#    PSCredential object for the dedicated service account that will run the scheduled task.
-#    This account should have appropriate permissions for the installation and output directories.
-#
-#.PARAMETER DeviceListFile
-#    Path to devices.txt file for the collector
-#
-#.PARAMETER OutputDirectory
-#    Directory where tech-support files will be saved
-#
-#.PARAMETER LogPath
-#    Installation log file path (default: C:\Logs\Get-CiscoTechSupport-Install.log)
-#
-#.PARAMETER Force
-#    Force reinstallation if already installed
-#
-#.PARAMETER SkipTaskCreation
-#    Skip scheduled task creation
-#
-#.PARAMETER Uninstall
-#    Uninstall the Cisco Tech-Support Collector and remove all components
-#
-#.EXAMPLE
-#    .\Install-GetCiscoTechSupport.ps1 -ArchivePath ".\cisco-collector.zip"
-#    
-#    Installs the collector and prompts for service account credentials interactively
-#
-#.EXAMPLE
-#    $cred = Get-Credential -Message "Enter service account credentials"
-#    .\Install-GetCiscoTechSupport.ps1 -ArchivePath ".\cisco-collector.zip" -ServiceAccountCredential $cred
-#
-#    Installs the collector using pre-captured credentials
-#
-#.EXAMPLE
-#    .\Install-GetCiscoTechSupport.ps1 -ArchivePath ".\cisco-collector.zip" -ScheduleType Weekly -ScheduleTime "03:00"
-#
-#    Installs with weekly schedule at 3:00 AM
-#
-#.EXAMPLE
-#    .\Install-GetCiscoTechSupport.ps1 -Uninstall
-#
-#    Completely removes the Cisco Tech-Support Collector installation
-#
-#.NOTES
-#    Author: Kismet Agbasi (Github: kismetgerald Email: KismetG17@gmail.com)
-#    Version: 2.0.0
-#    Date: December 9, 2025
-#    Requires: PowerShell 5.1+ with Administrator privileges
-#    
-#    IMPORTANT: This script is designed for embedded Python distributions.
-#    The archive should contain Python at the root level, not inside a .venv folder.
-#    
-#    SECURITY NOTE: A dedicated service account is REQUIRED for production use.
-#    The service account must have appropriate permissions.
-#    The SYSTEM account should only be used for testing/development purposes.
+<#
+.SYNOPSIS
+    Installation script for Cisco Tech-Support Collector
+
+.DESCRIPTION
+    Extracts the Cisco Tech-Support Collector archive, validates embedded Python
+    distribution, and creates a scheduled task for automated collection runs. 
+    Designed for offline deployment with embedded Python distribution.
+    
+    IMPORTANT: This solution REQUIRES a dedicated service account. The SYSTEM
+    account should NOT be used for production deployments due to credential
+    management and security audit limitations.
+
+.PARAMETER ArchivePath
+    Path to the downloaded .zip archive from GitHub
+
+.PARAMETER InstallPath
+    Target installation directory (default: C:\Scripts\Get-CiscoTechSupport)
+
+.PARAMETER ScheduleType
+    Schedule frequency: Daily, Weekly, Monthly, or None (default: Daily)
+
+.PARAMETER ScheduleTime
+    Time to run the scheduled task (default: 02:00)
+
+.PARAMETER ServiceAccountCredential
+    PSCredential object for the dedicated service account that will run the scheduled task.
+    This account should have appropriate permissions for the installation and output directories.
+
+.PARAMETER DeviceListFile
+    Path to devices.txt file for the collector
+
+.PARAMETER OutputDirectory
+    Directory where tech-support files will be saved
+
+.PARAMETER LogPath
+    Installation log file path (default: C:\Logs\Get-CiscoTechSupport-Install.log)
+
+.PARAMETER Force
+    Force reinstallation if already installed
+
+.PARAMETER SkipTaskCreation
+    Skip scheduled task creation
+
+.PARAMETER Uninstall
+    Uninstall the Cisco Tech-Support Collector and remove all components
+
+.EXAMPLE
+    .\Install-GetCiscoTechSupport.ps1 -ArchivePath ".\cisco-collector.zip"
+    
+    Installs the collector and prompts for service account credentials interactively
+
+.EXAMPLE
+    $cred = Get-Credential -Message "Enter service account credentials"
+    .\Install-GetCiscoTechSupport.ps1 -ArchivePath ".\cisco-collector.zip" -ServiceAccountCredential $cred
+
+    Installs the collector using pre-captured credentials
+
+.EXAMPLE
+    .\Install-GetCiscoTechSupport.ps1 -ArchivePath ".\cisco-collector.zip" -ScheduleType Weekly -ScheduleTime "03:00"
+
+    Installs with weekly schedule at 3:00 AM
+
+.EXAMPLE
+    .\Install-GetCiscoTechSupport.ps1 -Uninstall
+
+    Completely removes the Cisco Tech-Support Collector installation
+
+.NOTES
+    Author: Kismet Agbasi (Github: kismetgerald Email: KismetG17@gmail.com)
+    Version: 2.0.0
+    Date: December 9, 2025
+    Requires: PowerShell 5.1+ with Administrator privileges
+    
+    IMPORTANT: This script is designed for embedded Python distributions.
+    The archive should contain Python at the root level, not inside a .venv folder.
+    
+    SECURITY NOTE: A dedicated service account is REQUIRED for production use.
+    The service account must have appropriate permissions.
+    The SYSTEM account should only be used for testing/development purposes.
+#>
 
 [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName='Install')]
 param(
