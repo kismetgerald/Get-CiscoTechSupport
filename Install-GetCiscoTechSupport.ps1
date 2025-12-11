@@ -56,18 +56,18 @@
     Uninstall the Cisco Tech-Support Collector and remove all components
 
 .EXAMPLE
-    .\Install-GetCiscoTechSupport.ps1 -ArchivePath ".\cisco-collector.zip"
+    .\Install-GetCiscoTechSupport.ps1 -ArchivePath ".\Get-CiscoTechSupport.zip"
     
     Installs the collector and prompts for service account credentials interactively
 
 .EXAMPLE
     $cred = Get-Credential -Message "Enter service account credentials"
-    .\Install-GetCiscoTechSupport.ps1 -ArchivePath ".\cisco-collector.zip" -ServiceAccountCredential $cred
+    .\Install-GetCiscoTechSupport.ps1 -ArchivePath ".\Get-CiscoTechSupport.zip" -ServiceAccountCredential $cred
 
     Installs the collector using pre-captured credentials
 
 .EXAMPLE
-    .\Install-GetCiscoTechSupport.ps1 -ArchivePath ".\cisco-collector.zip" -ScheduleType Weekly -ScheduleTime "03:00"
+    .\Install-GetCiscoTechSupport.ps1 -ArchivePath ".\Get-CiscoTechSupport.zip" -ScheduleType Weekly -ScheduleTime "03:00"
 
     Installs with weekly schedule at 3:00 AM
 
@@ -78,8 +78,8 @@
 
 .NOTES
     Author: Kismet Agbasi (Github: kismetgerald Email: KismetG17@gmail.com)
-    Version: 2.0.0
-    Date: December 10, 2025
+    Version: 1.0.0-alpha3
+    Date: December 11, 2025
     Requires: PowerShell 5.1+ with Administrator privileges
     
     IMPORTANT: This script is designed for embedded Python distributions.
