@@ -78,7 +78,7 @@
 
 .NOTES
     Author: Kismet Agbasi (Github: kismetgerald Email: KismetG17@gmail.com)
-    Version: 1.0.0-alpha3
+    Version: 0.0.3
     Date: December 11, 2025
     Requires: PowerShell 5.1+ with Administrator privileges
     
