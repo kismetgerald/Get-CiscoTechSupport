@@ -313,13 +313,53 @@ function Set-SecondaryLogonService {
     param(
         [Parameter(Mandatory=$true)]
         [ValidateSet('Manual','Disabled')]
-        [string]$StartType
+        [string]$StartType,
+        
+        [Parameter(Mandatory=$false)]
+        [switch]$StopService
     )
     
     try {
+        if ($StopService) {
+            Write-InstallLog -Message "Stopping Secondary Logon service" -Level INFO
+            Stop-Service -Name "seclogon" -Force -ErrorAction Stop
+            
+            # Wait for service to stop (max 10 seconds)
+            $timeout = 10
+            $elapsed = 0
+            while ((Get-Service -Name "seclogon").Status -ne 'Stopped' -and $elapsed -lt $timeout) {
+                Start-Sleep -Seconds 1
+                $elapsed++
+            }
+            
+            $service = Get-Service -Name "seclogon"
+            if ($service.Status -eq 'Stopped') {
+                Write-InstallLog -Message "Secondary Logon service stopped successfully" -Level SUCCESS
+            }
+            else {
+                Write-InstallLog -Message "Secondary Logon service did not stop within timeout" -Level WARNING
+                return $false
+            }
+        }
+        
         Set-Service -Name "seclogon" -StartupType $StartType -ErrorAction Stop
-        Write-InstallLog -Message "Secondary Logon service set to: $StartType" -Level INFO
-        return $true
+        Write-InstallLog -Message "Secondary Logon service startup type set to: $StartType" -Level INFO
+        
+        # Validate the change
+        $service = Get-Service -Name "seclogon"
+        if ($service.StartType -eq $StartType) {
+            Write-InstallLog -Message "Verified: Secondary Logon service is $StartType" -Level SUCCESS
+            
+            if ($StopService -and $service.Status -eq 'Stopped') {
+                Write-InstallLog -Message "Verified: Secondary Logon service is Stopped" -Level SUCCESS
+            }
+            
+            return $true
+        }
+        else {
+            Write-InstallLog -Message "Failed to set Secondary Logon service to $StartType" -Level ERROR
+            return $false
+        }
     }
     catch {
         Write-InstallLog -Message "Failed to modify Secondary Logon service: $_" -Level ERROR
@@ -459,16 +499,22 @@ Remove-Item '$tempScriptPath' -Force -ErrorAction SilentlyContinue
         if ($needsRestore) {
             Write-Host ""
             Write-Host "Restoring STIG compliance..." -ForegroundColor Cyan
-            Write-InstallLog -Message "Restoring Secondary Logon service to Disabled" -Level INFO
+            Write-InstallLog -Message "Stopping and disabling Secondary Logon service" -Level INFO
             
-            if (Set-SecondaryLogonService -StartType Disabled) {
-                Write-Host "Secondary Logon service restored to 'Disabled' (STIG compliant)" -ForegroundColor Green
-                Write-InstallLog -Message "Secondary Logon service restored to Disabled successfully" -Level SUCCESS
+            if (Set-SecondaryLogonService -StartType Disabled -StopService) {
+                Write-Host "Secondary Logon service stopped and disabled (STIG compliant)" -ForegroundColor Green
+                
+                # Final verification
+                $finalCheck = Get-Service -Name "seclogon"
+                Write-Host "  Status: $($finalCheck.Status)" -ForegroundColor Gray
+                Write-Host "  Startup Type: $($finalCheck.StartType)" -ForegroundColor Gray
+                Write-InstallLog -Message "Secondary Logon service verified: Status=$($finalCheck.Status), StartType=$($finalCheck.StartType)" -Level SUCCESS
             }
             else {
-                Write-Host "WARNING: Failed to restore Secondary Logon service to 'Disabled'" -ForegroundColor Red
-                Write-Host "MANUAL ACTION REQUIRED: Disable the service to maintain STIG compliance" -ForegroundColor Yellow
-                Write-Host "Run: Set-Service -Name seclogon -StartupType Disabled" -ForegroundColor Yellow
+                Write-Host "WARNING: Failed to restore Secondary Logon service" -ForegroundColor Red
+                Write-Host "MANUAL ACTION REQUIRED to maintain STIG compliance:" -ForegroundColor Yellow
+                Write-Host "  Stop-Service -Name seclogon -Force" -ForegroundColor Yellow
+                Write-Host "  Set-Service -Name seclogon -StartupType Disabled" -ForegroundColor Yellow
                 Write-InstallLog -Message "Failed to restore Secondary Logon service - manual intervention required" -Level ERROR
             }
         }
