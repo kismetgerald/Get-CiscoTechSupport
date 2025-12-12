@@ -960,14 +960,40 @@ class CiscoCollector:
         self.logger.info(f"ARP discovery found {len(devices)} potential devices")
         return devices
     
-    def discover_devices(self, subnet=None, snmp_version='2c', snmp_community='public',
+    def discover_devices(self, method='cdp', gateway_ip=None, subnet=None, 
+                        snmp_version='2c', snmp_community='public',
                         v3_user=None, v3_auth_protocol='SHA', v3_auth_pass=None,
                         v3_priv_protocol='AES', v3_priv_pass=None, v3_level='authPriv'):
-        """Main discovery function with SNMP primary and ARP fallback"""
+        """
+        Main discovery function supporting multiple methods.
+        
+        Args:
+            method: Discovery method - 'cdp', 'snmp', 'arp', or 'hybrid'
+            gateway_ip: Gateway IP for CDP discovery (auto-detect if None)
+            subnet: Subnet for SNMP discovery
+            snmp_version: SNMP version ('2c' or '3')
+            Other args: SNMP configuration parameters
+        
+        Returns:
+            List of discovered device IPs
+        """
         devices = []
         
-        if subnet:
-            # Try SNMP first
+        if method == 'cdp':
+            # CDP discovery from default gateway
+            self.logger.info("Using CDP discovery method")
+            devices = self.cdp_discover_devices(gateway_ip=gateway_ip, recursive=False)
+            
+            if not devices:
+                self.logger.warning("CDP discovery found no devices")
+        
+        elif method == 'snmp':
+            # SNMP-based subnet scan
+            self.logger.info("Using SNMP discovery method")
+            if not subnet:
+                self.logger.error("SNMP discovery requires --subnet parameter")
+                return []
+            
             devices = self.snmp_discover_devices(
                 subnet, snmp_version, snmp_community,
                 v3_user, v3_auth_protocol, v3_auth_pass,
@@ -975,12 +1001,44 @@ class CiscoCollector:
             )
             
             if not devices:
-                self.logger.warning("SNMP discovery found no devices, falling back to ARP")
-                devices = self.arp_discover_devices()
-        else:
-            # No subnet specified, use ARP only
+                self.logger.warning("SNMP discovery found no devices")
+        
+        elif method == 'arp':
+            # ARP table discovery
+            self.logger.info("Using ARP discovery method")
             devices = self.arp_discover_devices()
             
+            if not devices:
+                self.logger.warning("ARP discovery found no devices")
+        
+        elif method == 'hybrid':
+            # Hybrid: CDP + SNMP subnet scan
+            self.logger.info("Using hybrid discovery method (CDP + SNMP)")
+            
+            # Try CDP first
+            cdp_devices = self.cdp_discover_devices(gateway_ip=gateway_ip, recursive=False)
+            self.logger.info(f"CDP discovered {len(cdp_devices)} device(s)")
+            
+            # Then SNMP if subnet provided
+            snmp_devices = []
+            if subnet:
+                snmp_devices = self.snmp_discover_devices(
+                    subnet, snmp_version, snmp_community,
+                    v3_user, v3_auth_protocol, v3_auth_pass,
+                    v3_priv_protocol, v3_priv_pass, v3_level
+                )
+                self.logger.info(f"SNMP discovered {len(snmp_devices)} device(s)")
+            else:
+                self.logger.warning("No subnet provided for SNMP portion of hybrid discovery")
+            
+            # Combine results
+            devices = list(set(cdp_devices + snmp_devices))
+            self.logger.info(f"Hybrid discovery total: {len(devices)} unique device(s)")
+        
+        else:
+            self.logger.error(f"Unknown discovery method: {method}")
+            return []
+        
         return list(set(devices))  # Remove duplicates
     
     # endregion
