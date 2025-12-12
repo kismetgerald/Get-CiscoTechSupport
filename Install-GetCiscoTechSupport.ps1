@@ -394,17 +394,17 @@ function Start-ServiceAccountCredentialSetup {
         return $false
     }
     
-    $originalStartType = $serviceInfo.StartType
     $needsRestore = $false
+    $wasStoppedAndDisabled = ($serviceInfo.Status -eq 'Stopped' -and $serviceInfo.StartType -eq 'Disabled')
     
     Write-Host "Secondary Logon Service Status:" -ForegroundColor White
     Write-Host "  Current Status: $($serviceInfo.Status)" -ForegroundColor Gray
-    Write-Host "  Startup Type: $originalStartType" -ForegroundColor Gray
+    Write-Host "  Startup Type: $($serviceInfo.StartType)" -ForegroundColor Gray
     Write-Host ""
     
-    if ($serviceInfo.StartType -eq 'Disabled') {
+    if ($wasStoppedAndDisabled) {
         Write-Host "NOTICE: " -ForegroundColor Yellow -NoNewline
-        Write-Host "Secondary Logon service is DISABLED (likely due to STIG V-253289)" -ForegroundColor White
+        Write-Host "Secondary Logon service is STOPPED and DISABLED (STIG V-253289 compliant)" -ForegroundColor White
         Write-Host ""
         Write-Host "STIG V-253289 requires this service to be disabled for security." -ForegroundColor Gray
         Write-Host "To configure device credentials, we need to TEMPORARILY enable it." -ForegroundColor Gray
@@ -414,7 +414,7 @@ function Start-ServiceAccountCredentialSetup {
         Write-Host "  2. Launch PowerShell as service account: $($ServiceAccountCred.UserName)" -ForegroundColor Gray
         Write-Host "  3. Run credential setup script (you'll be prompted for device credentials)" -ForegroundColor Gray
         Write-Host "  4. Verify credential file creation" -ForegroundColor Gray
-        Write-Host "  5. Restore Secondary Logon to 'Disabled' (STIG compliance)" -ForegroundColor Gray
+        Write-Host "  5. Stop service and restore to 'Disabled' (STIG compliance)" -ForegroundColor Gray
         Write-Host ""
         
         $response = Read-Host "Proceed with automated credential setup? (yes/no) [yes]"
@@ -441,13 +441,15 @@ function Start-ServiceAccountCredentialSetup {
         $needsRestore = $true
         Start-Sleep -Seconds 2
     }
-    elseif ($serviceInfo.StartType -eq 'Manual') {
-        Write-Host "Secondary Logon service is set to 'Manual' - no changes needed" -ForegroundColor Green
+    elseif ($serviceInfo.Status -eq 'Running') {
+        Write-Host "Secondary Logon service is RUNNING - proceeding with credential setup" -ForegroundColor Green
         Write-Host ""
+        Write-InstallLog -Message "Secondary Logon service is running - no changes needed" -Level INFO
     }
     else {
-        Write-Host "Secondary Logon service is enabled - proceeding with credential setup" -ForegroundColor Green
+        Write-Host "Secondary Logon service is available - proceeding with credential setup" -ForegroundColor Green
         Write-Host ""
+        Write-InstallLog -Message "Secondary Logon service status: $($serviceInfo.Status), StartType: $($serviceInfo.StartType)" -Level INFO
     }
     
     Write-Host ""
@@ -484,7 +486,6 @@ function Start-ServiceAccountCredentialSetup {
         
         $tempCred = New-Object System.Management.Automation.PSCredential($ServiceAccountCred.UserName, $userPassword)
         
-        # Create a script block for the credential setup
         $credSetupScript = @"
 Set-Location '$InstallPath'
 Write-Host ''
@@ -503,7 +504,7 @@ Write-Host '  2. Device Password' -ForegroundColor Gray
 Write-Host '  3. Enable Password (for privilege 15 access)' -ForegroundColor Gray
 Write-Host ''
 
-& '.\python.exe' '$script:PythonScriptName' --save-credentials
+& '.\python.exe' '$PythonScript' --save-credentials
 
 Write-Host ''
 if (Test-Path '.cisco_credentials') {
@@ -533,7 +534,6 @@ Read-Host
             Write-Host ""
             Write-Host "Launching credential setup window..." -ForegroundColor Cyan
             
-            # Use Start-Process with -Credential to launch as the service account
             $processParams = @{
                 FilePath = "powershell.exe"
                 ArgumentList = @(
@@ -591,7 +591,7 @@ Read-Host
         Write-InstallLog -Message "Automated credential setup failed after $attempt attempts" -Level ERROR
     }
     
-    # Restore service if needed (moved inside try/finally is no longer needed since we handle it here)
+    # Only restore if we changed it (was stopped AND disabled)
     if ($needsRestore) {
         Write-Host ""
         Write-Host "Restoring STIG compliance..." -ForegroundColor Cyan
@@ -600,11 +600,10 @@ Read-Host
         if (Set-SecondaryLogonService -StartType Disabled -StopService) {
             Write-Host "Secondary Logon service stopped and disabled (STIG compliant)" -ForegroundColor Green
             
-            # Final verification
             $finalCheck = Get-Service -Name "seclogon"
             Write-Host "  Status: $($finalCheck.Status)" -ForegroundColor Gray
             Write-Host "  Startup Type: $($finalCheck.StartType)" -ForegroundColor Gray
-            Write-InstallLog -Message "Secondary Logon service verified: Status=$($finalCheck.Status), StartType=$($finalCheck.StartType)" -Level SUCCESS
+            Write-InstallLog -Message "Secondary Logon service restored: Status=$($finalCheck.Status), StartType=$($finalCheck.StartType)" -Level SUCCESS
         }
         else {
             Write-Host "WARNING: Failed to restore Secondary Logon service" -ForegroundColor Red
