@@ -1246,6 +1246,11 @@ Examples:
     input_group.add_argument('--discover', action='store_true', help='Auto-discover devices')
     
     # Discovery options
+    parser.add_argument('--method', choices=['cdp', 'snmp', 'arp', 'hybrid'],
+                       default='cdp',
+                       help='Discovery method: cdp (default, uses gateway CDP), snmp (subnet scan), '
+                            'arp (local ARP table), hybrid (cdp + snmp)')
+    parser.add_argument('--gateway', help='Gateway IP for CDP discovery (auto-detect if not specified)')
     parser.add_argument('--subnet', help='Subnet for SNMP discovery (e.g., 192.168.1.0/24)')
     parser.add_argument('--snmp-version', choices=['2c', '3'], default=DEFAULT_SNMP_VERSION,
                        help=f'SNMP version (default: {DEFAULT_SNMP_VERSION})')
@@ -1392,6 +1397,8 @@ Examples:
         devices = load_devices_from_file(args.file)
     elif args.discover:
         devices = collector.discover_devices(
+            method=args.method,
+            gateway_ip=args.gateway,
             subnet=args.subnet,
             snmp_version=args.snmp_version,
             snmp_community=args.snmp_community,
