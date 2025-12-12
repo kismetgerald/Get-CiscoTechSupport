@@ -1204,85 +1204,90 @@ function Install-CiscoCollector {
                     }
                 }
                 
-                Write-Host "`nSNMP Configuration" -ForegroundColor Cyan
-                Write-Host "  1. SNMP v2c (community string)" -ForegroundColor White
-                Write-Host "  2. SNMP v3 (username/auth)" -ForegroundColor White
-                Write-Host "  3. Skip SNMP (ARP only)" -ForegroundColor White
-                $snmpChoice = Read-Host "`nSelection [1]"
-                if ([string]::IsNullOrWhiteSpace($snmpChoice)) { $snmpChoice = '1' }
-                
-                if ($snmpChoice -eq '1') {
-                    $snmpCommunity = Read-Host "SNMP community string [public]"
-                    if ([string]::IsNullOrWhiteSpace($snmpCommunity)) { $snmpCommunity = 'public' }
-                    $taskArguments += " --snmp-version 2c --snmp-community `"$snmpCommunity`""
-                    Write-InstallLog -Message "SNMP v2c configured with community: $snmpCommunity" -Level INFO
-                }
-                elseif ($snmpChoice -eq '2') {
-                    Write-Host "`nSNMP v3 Configuration" -ForegroundColor Cyan
-                    
-                    $snmpUser = Read-Host "SNMPv3 username"
-                    if ([string]::IsNullOrWhiteSpace($snmpUser)) {
-                        Write-InstallLog -Message "SNMPv3 username required" -Level ERROR
-                        throw "SNMPv3 username is required"
+                # SNMP Configuration (only for methods that use SNMP)
+                if ($discoveryMethod -in @('2', '4')) {
+                    Write-Host "`nSNMP Configuration" -ForegroundColor Cyan
+                    Write-Host "  1. SNMP v2c (community string)" -ForegroundColor White
+                    Write-Host "  2. SNMP v3 (username/auth)" -ForegroundColor White
+                    Write-Host "  3. Skip SNMP configuration (use defaults)" -ForegroundColor White
+                    $snmpChoice = Read-Host "`nSelection [1]"
+                    if ([string]::IsNullOrWhiteSpace($snmpChoice)) { $snmpChoice = '1' }
+
+                    if ($snmpChoice -eq '1') {
+                        $snmpCommunity = Read-Host "SNMP community string [public]"
+                        if ([string]::IsNullOrWhiteSpace($snmpCommunity)) { $snmpCommunity = 'public' }
+                        $taskArguments += " --snmp-version 2c --snmp-community `"$snmpCommunity`""
+                        Write-InstallLog -Message "SNMP v2c configured with community: $snmpCommunity" -Level INFO
                     }
-                    
-                    Write-Host "`nSecurity Level:" -ForegroundColor Cyan
-                    Write-Host "  1. noAuthNoPriv - No authentication, no encryption" -ForegroundColor White
-                    Write-Host "  2. authNoPriv - Authentication only, no encryption" -ForegroundColor White
-                    Write-Host "  3. authPriv - Authentication and encryption" -ForegroundColor White
-                    $secLevel = Read-Host "Selection [3]"
-                    if ([string]::IsNullOrWhiteSpace($secLevel)) { $secLevel = '3' }
-                    
-                    if ($secLevel -eq '1') {
-                        $taskArguments += " --snmp-version 3 --snmpv3-user `"$snmpUser`" --snmpv3-level noAuthNoPriv"
-                        Write-InstallLog -Message "SNMPv3 configured (noAuthNoPriv): user=$snmpUser" -Level INFO
-                    }
-                    elseif ($secLevel -eq '2') {
-                        Write-Host "`nAuthentication Protocol:" -ForegroundColor Cyan
-                        Write-Host "  1. MD5" -ForegroundColor White
-                        Write-Host "  2. SHA" -ForegroundColor White
-                        $authProto = Read-Host "Selection [2]"
-                        if ([string]::IsNullOrWhiteSpace($authProto)) { $authProto = '2' }
-                        $authProtocol = if ($authProto -eq '1') { 'MD5' } else { 'SHA' }
+                    elseif ($snmpChoice -eq '2') {
+                        Write-Host "`nSNMP v3 Configuration" -ForegroundColor Cyan
                         
-                        $authPassword = Read-Host "Authentication password" -AsSecureString
-                        $authPasswordPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-                            [Runtime.InteropServices.Marshal]::SecureStringToBSTR($authPassword))
+                        $snmpUser = Read-Host "SNMPv3 username"
+                        if ([string]::IsNullOrWhiteSpace($snmpUser)) {
+                            Write-InstallLog -Message "SNMPv3 username required" -Level ERROR
+                            throw "SNMPv3 username is required"
+                        }
                         
-                        $taskArguments += " --snmp-version 3 --snmpv3-user `"$snmpUser`" --snmpv3-level authNoPriv --snmpv3-auth-protocol `"$authProtocol`" --snmpv3-auth-password `"$authPasswordPlain`""
-                        Write-InstallLog -Message "SNMPv3 configured (authNoPriv): user=$snmpUser, auth=$authProtocol" -Level INFO
+                        Write-Host "`nSecurity Level:" -ForegroundColor Cyan
+                        Write-Host "  1. noAuthNoPriv - No authentication, no encryption" -ForegroundColor White
+                        Write-Host "  2. authNoPriv - Authentication only, no encryption" -ForegroundColor White
+                        Write-Host "  3. authPriv - Authentication and encryption" -ForegroundColor White
+                        $secLevel = Read-Host "Selection [3]"
+                        if ([string]::IsNullOrWhiteSpace($secLevel)) { $secLevel = '3' }
+                        
+                        if ($secLevel -eq '1') {
+                            $taskArguments += " --snmp-version 3 --snmpv3-user `"$snmpUser`" --snmpv3-level noAuthNoPriv"
+                            Write-InstallLog -Message "SNMPv3 configured (noAuthNoPriv): user=$snmpUser" -Level INFO
+                        }
+
+                        elseif ($secLevel -eq '2') {
+                            Write-Host "`nAuthentication Protocol:" -ForegroundColor Cyan
+                            Write-Host "  1. MD5" -ForegroundColor White
+                            Write-Host "  2. SHA" -ForegroundColor White
+                            $authProto = Read-Host "Selection [2]"
+                            if ([string]::IsNullOrWhiteSpace($authProto)) { $authProto = '2' }
+                            $authProtocol = if ($authProto -eq '1') { 'MD5' } else { 'SHA' }
+                            
+                            $authPassword = Read-Host "Authentication password" -AsSecureString
+                            $authPasswordPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+                                [Runtime.InteropServices.Marshal]::SecureStringToBSTR($authPassword))
+                            
+                            $taskArguments += " --snmp-version 3 --snmpv3-user `"$snmpUser`" --snmpv3-level authNoPriv --snmpv3-auth-protocol `"$authProtocol`" --snmpv3-auth-password `"$authPasswordPlain`""
+                            Write-InstallLog -Message "SNMPv3 configured (authNoPriv): user=$snmpUser, auth=$authProtocol" -Level INFO
+                        }
+
+                        else {
+                            Write-Host "`nAuthentication Protocol:" -ForegroundColor Cyan
+                            Write-Host "  1. MD5" -ForegroundColor White
+                            Write-Host "  2. SHA" -ForegroundColor White
+                            $authProto = Read-Host "Selection [2]"
+                            if ([string]::IsNullOrWhiteSpace($authProto)) { $authProto = '2' }
+                            $authProtocol = if ($authProto -eq '1') { 'MD5' } else { 'SHA' }
+                            
+                            $authPassword = Read-Host "Authentication password" -AsSecureString
+                            $authPasswordPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+                                [Runtime.InteropServices.Marshal]::SecureStringToBSTR($authPassword))
+                            
+                            Write-Host "`nPrivacy Protocol:" -ForegroundColor Cyan
+                            Write-Host "  1. DES" -ForegroundColor White
+                            Write-Host "  2. AES" -ForegroundColor White
+                            $privProto = Read-Host "Selection [2]"
+                            if ([string]::IsNullOrWhiteSpace($privProto)) { $privProto = '2' }
+                            $privProtocol = if ($privProto -eq '1') { 'DES' } else { 'AES' }
+                            
+                            $privPassword = Read-Host "Privacy password" -AsSecureString
+                            $privPasswordPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+                                [Runtime.InteropServices.Marshal]::SecureStringToBSTR($privPassword))
+                            
+                            $taskArguments += " --snmp-version 3 --snmpv3-user `"$snmpUser`" --snmpv3-level authPriv --snmpv3-auth-protocol `"$authProtocol`" --snmpv3-auth-password `"$authPasswordPlain`" --snmpv3-priv-protocol `"$privProtocol`" --snmpv3-priv-password `"$privPasswordPlain`""
+                            Write-InstallLog -Message "SNMPv3 configured (authPriv): user=$snmpUser, auth=$authProtocol, priv=$privProtocol" -Level INFO
+                        }
                     }
                     else {
-                        Write-Host "`nAuthentication Protocol:" -ForegroundColor Cyan
-                        Write-Host "  1. MD5" -ForegroundColor White
-                        Write-Host "  2. SHA" -ForegroundColor White
-                        $authProto = Read-Host "Selection [2]"
-                        if ([string]::IsNullOrWhiteSpace($authProto)) { $authProto = '2' }
-                        $authProtocol = if ($authProto -eq '1') { 'MD5' } else { 'SHA' }
-                        
-                        $authPassword = Read-Host "Authentication password" -AsSecureString
-                        $authPasswordPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-                            [Runtime.InteropServices.Marshal]::SecureStringToBSTR($authPassword))
-                        
-                        Write-Host "`nPrivacy Protocol:" -ForegroundColor Cyan
-                        Write-Host "  1. DES" -ForegroundColor White
-                        Write-Host "  2. AES" -ForegroundColor White
-                        $privProto = Read-Host "Selection [2]"
-                        if ([string]::IsNullOrWhiteSpace($privProto)) { $privProto = '2' }
-                        $privProtocol = if ($privProto -eq '1') { 'DES' } else { 'AES' }
-                        
-                        $privPassword = Read-Host "Privacy password" -AsSecureString
-                        $privPasswordPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-                            [Runtime.InteropServices.Marshal]::SecureStringToBSTR($privPassword))
-                        
-                        $taskArguments += " --snmp-version 3 --snmpv3-user `"$snmpUser`" --snmpv3-level authPriv --snmpv3-auth-protocol `"$authProtocol`" --snmpv3-auth-password `"$authPasswordPlain`" --snmpv3-priv-protocol `"$privProtocol`" --snmpv3-priv-password `"$privPasswordPlain`""
-                        Write-InstallLog -Message "SNMPv3 configured (authPriv): user=$snmpUser, auth=$authProtocol, priv=$privProtocol" -Level INFO
+                        Write-InstallLog -Message "SNMP configuration skipped, will use defaults" -Level INFO
                     }
                 }
-                else {
-                    Write-InstallLog -Message "SNMP configuration skipped, will use defaults" -Level INFO
-                }
-            }
+            } 
             else {
                 Write-Host "`nDevice List Configuration" -ForegroundColor Cyan
                 
