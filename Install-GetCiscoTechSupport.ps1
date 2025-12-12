@@ -21,10 +21,10 @@
     Target installation directory (default: C:\Scripts\Get-CiscoTechSupport)
 
 .PARAMETER ScheduleType
-    Schedule frequency: Daily, Weekly, Monthly, or None (default: Daily)
+    Schedule frequency: Daily, Weekly, Monthly, or None (default: Monthly)
 
 .PARAMETER ScheduleTime
-    Time to run the scheduled task (default: 02:00)
+    Time to run the scheduled task (default: 03:00)
 
 .PARAMETER ServiceAccountCredential
     PSCredential object for the dedicated service account that will run the scheduled task.
@@ -101,11 +101,11 @@ param(
 
     [Parameter(Mandatory = $false, ParameterSetName='Install')]
     [ValidateSet('Daily', 'Weekly', 'Monthly', 'None')]
-    [string]$ScheduleType = 'Daily',
+    [string]$ScheduleType = 'Monthly',
 
     [Parameter(Mandatory = $false, ParameterSetName='Install')]
     [ValidatePattern('^\d{2}:\d{2}$')]
-    [string]$ScheduleTime = '02:00',
+    [string]$ScheduleTime = '03:00',
 
     [Parameter(Mandatory = $false, ParameterSetName='Install')]
     [PSCredential]$ServiceAccountCredential,
@@ -777,7 +777,10 @@ function New-CiscoCollectorTask {
             New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday -At $ScheduleTime
         }
         'Monthly' {
-            New-ScheduledTaskTrigger -Weekly -WeeksInterval 4 -DaysOfWeek Monday -At $ScheduleTime
+            # PowerShell scheduled task cmdlets don't support "1st of month" directly
+            # We'll create it and then modify via COM object
+            $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday -At $ScheduleTime -WeeksInterval 4
+            $trigger
         }
         default {
             Write-InstallLog -Message "No schedule specified - task will be created without trigger" -Level WARNING
@@ -815,6 +818,34 @@ function New-CiscoCollectorTask {
                                    -Force | Out-Null
         }
         
+        # Adjust Monthly trigger to run on 1st day of month
+        if ($ScheduleType -eq 'Monthly') {
+            try {
+                $taskScheduler = New-Object -ComObject Schedule.Service
+                $taskScheduler.Connect()
+                $taskFolder = $taskScheduler.GetFolder("\")
+                $task = $taskFolder.GetTask($script:TaskName)
+                $taskDefinition = $task.Definition
+                
+                # Clear existing triggers and create new monthly trigger
+                $taskDefinition.Triggers.Clear()
+                $monthlyTrigger = $taskDefinition.Triggers.Create(4) # 4 = TASK_TRIGGER_MONTHLY
+                $monthlyTrigger.StartBoundary = (Get-Date).ToString("yyyy-MM-01T$ScheduleTime`:00")
+                $monthlyTrigger.MonthsOfYear = 0xFFF # All months (bits 1-12)
+                $monthlyTrigger.DaysOfMonth = 1 # 1st day
+                $monthlyTrigger.Enabled = $true
+                
+                # Save the modified task
+                $taskFolder.RegisterTaskDefinition($script:TaskName, $taskDefinition, 4, $username, $password, 1) | Out-Null
+                
+                Write-InstallLog -Message "Monthly trigger configured for 1st day of month" -Level SUCCESS
+            }
+            catch {
+                Write-InstallLog -Message "Warning: Could not set monthly trigger to 1st day: $_" -Level WARNING
+                Write-InstallLog -Message "Task will run every 4 weeks instead" -Level INFO
+            }
+        }
+
         Write-InstallLog -Message "Scheduled task created successfully" -Level SUCCESS
         Write-InstallLog -Message "Task: $script:TaskName" -Level INFO
         Write-InstallLog -Message "Schedule: $ScheduleType at $ScheduleTime" -Level INFO
