@@ -432,6 +432,105 @@ class CredentialManager:
 
 # endregion
 
+# region Helper Functions for Discovery
+
+def get_default_gateway():
+    """
+    Get the default gateway IP address from the system.
+    Works cross-platform (Windows, Linux, macOS)
+    """
+    try:
+        if IS_WINDOWS:
+            # Windows: Use 'route print' command
+            result = subprocess.run(['route', 'print', '0.0.0.0'], 
+                                  capture_output=True, text=True, timeout=5)
+            # Look for line with 0.0.0.0 and extract gateway
+            for line in result.stdout.split('\n'):
+                if '0.0.0.0' in line:
+                    parts = line.split()
+                    # Gateway is typically the 3rd or 4th column
+                    for part in parts:
+                        try:
+                            ip = ipaddress.ip_address(part)
+                            if not ip.is_loopback and not ip.is_multicast:
+                                return str(ip)
+                        except ValueError:
+                            continue
+        
+        elif IS_LINUX:
+            # Linux: Use 'ip route' command
+            result = subprocess.run(['ip', 'route', 'show', 'default'], 
+                                  capture_output=True, text=True, timeout=5)
+            # Format: default via 192.168.1.1 dev eth0
+            match = re.search(r'default via (\d+\.\d+\.\d+\.\d+)', result.stdout)
+            if match:
+                return match.group(1)
+        
+        elif IS_MAC:
+            # macOS: Use 'route -n get default' command
+            result = subprocess.run(['route', '-n', 'get', 'default'], 
+                                  capture_output=True, text=True, timeout=5)
+            # Look for 'gateway: x.x.x.x'
+            match = re.search(r'gateway:\s*(\d+\.\d+\.\d+\.\d+)', result.stdout)
+            if match:
+                return match.group(1)
+    
+    except Exception as e:
+        pass
+    
+    return None
+
+def parse_cdp_neighbors(cdp_output):
+    """
+    Parse 'show cdp neighbors detail' output to extract device information.
+    Returns list of dicts with 'hostname', 'ip', and 'platform' keys.
+    """
+    devices = []
+    current_device = {}
+    
+    lines = cdp_output.split('\n')
+    
+    for line in lines:
+        line = line.strip()
+        
+        # Device ID marks start of new neighbor entry
+        if line.startswith('Device ID:'):
+            if current_device and 'ip' in current_device:
+                devices.append(current_device)
+            current_device = {}
+            device_id = line.split(':', 1)[1].strip()
+            # Remove domain suffix if present
+            hostname = device_id.split('.')[0]
+            current_device['hostname'] = hostname
+        
+        # IP address - look for various formats
+        elif 'IP address:' in line or 'IPv4 Address:' in line:
+            # Format: "  IP address: 10.1.1.1" or "Entry address(es): \n  IP address: 10.1.1.1"
+            ip_match = re.search(r'(\d+\.\d+\.\d+\.\d+)', line)
+            if ip_match:
+                current_device['ip'] = ip_match.group(1)
+        
+        elif 'Management address' in line:
+            # Some IOS versions use "Management address(es):"
+            ip_match = re.search(r'(\d+\.\d+\.\d+\.\d+)', line)
+            if ip_match:
+                current_device['ip'] = ip_match.group(1)
+        
+        # Platform information
+        elif line.startswith('Platform:'):
+            platform = line.split(':', 1)[1].strip()
+            # Remove capabilities info if present
+            platform = platform.split(',')[0].strip()
+            current_device['platform'] = platform
+    
+    # Don't forget the last device
+    if current_device and 'ip' in current_device:
+        devices.append(current_device)
+    
+    return devices
+
+# endregion
+
 # region Cisco Collector Class
 
 class CiscoCollector:
