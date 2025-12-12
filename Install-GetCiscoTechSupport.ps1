@@ -1125,15 +1125,83 @@ function Install-CiscoCollector {
             
             if ($modeChoice -eq '2') {
                 $isDiscoveryMode = $true
-                Write-Host "`nDiscovery Configuration" -ForegroundColor Cyan
-                $subnet = Read-Host "Enter subnet for discovery (e.g., 192.168.1.0/24)"
+                Write-Host "`nDiscovery Method" -ForegroundColor Cyan
+                Write-Host "=========================================" -ForegroundColor Cyan
+                Write-Host "  1. CDP Discovery - Query default gateway for network topology (Recommended)" -ForegroundColor White
+                Write-Host "  2. SNMP Subnet Scan - Scan specific subnet via SNMP" -ForegroundColor White
+                Write-Host "  3. ARP Discovery - Parse local ARP table" -ForegroundColor White
+                Write-Host "  4. Hybrid - CDP + SNMP (most thorough)" -ForegroundColor White
+                $discoveryMethod = Read-Host "`nSelection [1]"
+                if ([string]::IsNullOrWhiteSpace($discoveryMethod)) { $discoveryMethod = '1' }
                 
-                if ([string]::IsNullOrWhiteSpace($subnet)) {
-                    Write-InstallLog -Message "No subnet provided, using ARP discovery" -Level WARNING
-                    $taskArguments = "--discover"
-                } else {
-                    $taskArguments = "--discover --subnet `"$subnet`""
-                    Write-InstallLog -Message "Discovery mode configured for subnet: $subnet" -Level INFO
+                switch ($discoveryMethod) {
+                    '1' {
+                        # CDP Discovery
+                        Write-Host "`nCDP Discovery Configuration" -ForegroundColor Cyan
+                        Write-Host "This method queries your default gateway via CDP to discover" -ForegroundColor Gray
+                        Write-Host "the network topology. This is the most reliable method for" -ForegroundColor Gray
+                        Write-Host "discovering Cisco devices across VLANs." -ForegroundColor Gray
+                        Write-Host ""
+                        
+                        $gatewayIP = Read-Host "Default gateway IP (leave blank to auto-detect)"
+                        
+                        if ([string]::IsNullOrWhiteSpace($gatewayIP)) {
+                            $taskArguments = "--discover --method cdp"
+                            Write-InstallLog -Message "CDP discovery configured with auto-detect gateway" -Level INFO
+                        }
+                        else {
+                            $taskArguments = "--discover --method cdp --gateway `"$gatewayIP`""
+                            Write-InstallLog -Message "CDP discovery configured with gateway: $gatewayIP" -Level INFO
+                        }
+                    }
+                    
+                    '2' {
+                        # SNMP Subnet Scan
+                        Write-Host "`nSNMP Subnet Scan Configuration" -ForegroundColor Cyan
+                        $subnet = Read-Host "Enter subnet for discovery (e.g., 192.168.1.0/24)"
+                        
+                        if ([string]::IsNullOrWhiteSpace($subnet)) {
+                            Write-InstallLog -Message "No subnet provided for SNMP scan" -Level ERROR
+                            throw "Subnet is required for SNMP discovery method"
+                        }
+                        
+                        $taskArguments = "--discover --method snmp --subnet `"$subnet`""
+                        Write-InstallLog -Message "SNMP discovery configured for subnet: $subnet" -Level INFO
+                    }
+                    
+                    '3' {
+                        # ARP Discovery
+                        Write-Host "`nARP Discovery Configuration" -ForegroundColor Cyan
+                        Write-Host "This method parses the local ARP table to find devices." -ForegroundColor Gray
+                        Write-Host "Note: Only discovers devices on the local subnet." -ForegroundColor Yellow
+                        Write-Host ""
+                        
+                        $taskArguments = "--discover --method arp"
+                        Write-InstallLog -Message "ARP discovery configured" -Level INFO
+                    }
+                    
+                    '4' {
+                        # Hybrid Discovery
+                        Write-Host "`nHybrid Discovery Configuration" -ForegroundColor Cyan
+                        Write-Host "This combines CDP and SNMP for the most thorough discovery." -ForegroundColor Gray
+                        Write-Host ""
+                        
+                        $gatewayIP = Read-Host "Default gateway IP (leave blank to auto-detect)"
+                        $subnet = Read-Host "Subnet for SNMP scan (e.g., 192.168.1.0/24)"
+                        
+                        if ([string]::IsNullOrWhiteSpace($gatewayIP)) {
+                            $taskArguments = "--discover --method hybrid"
+                        }
+                        else {
+                            $taskArguments = "--discover --method hybrid --gateway `"$gatewayIP`""
+                        }
+                        
+                        if (-not [string]::IsNullOrWhiteSpace($subnet)) {
+                            $taskArguments += " --subnet `"$subnet`""
+                        }
+                        
+                        Write-InstallLog -Message "Hybrid discovery configured (CDP + SNMP)" -Level INFO
+                    }
                 }
                 
                 Write-Host "`nSNMP Configuration" -ForegroundColor Cyan
