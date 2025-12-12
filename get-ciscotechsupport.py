@@ -609,6 +609,147 @@ class CiscoCollector:
     
     # region Device Discovery Methods
     
+    # region Device Discovery Methods
+    
+    def cdp_discover_devices(self, gateway_ip=None, recursive=False, max_depth=2):
+        """
+        Discover Cisco devices via CDP by querying the default gateway.
+        
+        Args:
+            gateway_ip: IP of gateway to query (auto-detect if None)
+            recursive: If True, recursively query discovered neighbors
+            max_depth: Maximum recursion depth (default: 2)
+        
+        Returns:
+            List of discovered device IP addresses
+        """
+        self.logger.info("Starting CDP-based device discovery")
+        
+        # Get gateway IP
+        if not gateway_ip:
+            gateway_ip = get_default_gateway()
+            if not gateway_ip:
+                self.logger.error("Could not determine default gateway")
+                return []
+            self.logger.info(f"Auto-detected default gateway: {gateway_ip}")
+        else:
+            self.logger.info(f"Using specified gateway: {gateway_ip}")
+        
+        # Test if gateway is reachable
+        if not self._test_connectivity(gateway_ip):
+            self.logger.error(f"Gateway {gateway_ip} is not reachable")
+            return []
+        
+        discovered_ips = set()
+        processed_ips = set()
+        to_process = [(gateway_ip, 0)]  # (ip, depth) tuples
+        
+        while to_process:
+            current_ip, depth = to_process.pop(0)
+            
+            # Skip if already processed
+            if current_ip in processed_ips:
+                continue
+            
+            # Skip if max depth reached
+            if depth > max_depth:
+                continue
+            
+            processed_ips.add(current_ip)
+            self.logger.info(f"Querying CDP on {current_ip} (depth: {depth})")
+            
+            # Query this device for CDP neighbors
+            neighbors = self._query_cdp_neighbors(current_ip)
+            
+            if neighbors:
+                self.logger.info(f"Found {len(neighbors)} CDP neighbor(s) on {current_ip}")
+                for neighbor in neighbors:
+                    neighbor_ip = neighbor.get('ip')
+                    hostname = neighbor.get('hostname', 'unknown')
+                    platform = neighbor.get('platform', 'unknown')
+                    
+                    if neighbor_ip:
+                        discovered_ips.add(neighbor_ip)
+                        self.logger.info(f"  - {hostname} ({neighbor_ip}) - {platform}")
+                        
+                        # Add to processing queue if recursive and not already processed
+                        if recursive and neighbor_ip not in processed_ips:
+                            to_process.append((neighbor_ip, depth + 1))
+            else:
+                self.logger.warning(f"No CDP neighbors found on {current_ip}")
+        
+        result = list(discovered_ips)
+        self.logger.info(f"CDP discovery complete: found {len(result)} device(s)")
+        return result
+    
+    def _test_connectivity(self, ip, timeout=2):
+        """Test if an IP is reachable via ICMP ping"""
+        try:
+            if IS_WINDOWS:
+                result = subprocess.run(['ping', '-n', '1', '-w', str(timeout * 1000), ip],
+                                      capture_output=True, timeout=timeout + 1)
+            else:
+                result = subprocess.run(['ping', '-c', '1', '-W', str(timeout), ip],
+                                      capture_output=True, timeout=timeout + 1)
+            return result.returncode == 0
+        except:
+            return False
+    
+    def _query_cdp_neighbors(self, device_ip):
+        """
+        Connect to a device and retrieve CDP neighbors.
+        Returns list of neighbor dicts or empty list on failure.
+        """
+        device = {
+            'device_type': self.device_type,
+            'host': device_ip,
+            'username': self.username,
+            'password': self.password,
+            'secret': self.enable_secret,
+            'timeout': self.connection_timeout,
+            'session_timeout': self.session_timeout,
+        }
+        
+        try:
+            # Connect to device
+            connection = ConnectHandler(**device)
+            
+            # Enter enable mode if needed
+            if not connection.check_enable_mode():
+                connection.enable()
+            
+            # Check if it's a Cisco device
+            version_output = connection.send_command("show version", read_timeout=30)
+            if 'cisco' not in version_output.lower():
+                self.logger.warning(f"{device_ip}: Not a Cisco device")
+                connection.disconnect()
+                return []
+            
+            # Get CDP neighbors detail
+            cdp_output = connection.send_command("show cdp neighbors detail", read_timeout=60)
+            
+            # Check if CDP is enabled
+            if 'cdp is not enabled' in cdp_output.lower():
+                self.logger.warning(f"{device_ip}: CDP is not enabled")
+                connection.disconnect()
+                return []
+            
+            # Parse the output
+            neighbors = parse_cdp_neighbors(cdp_output)
+            
+            connection.disconnect()
+            return neighbors
+            
+        except NetmikoTimeoutException:
+            self.logger.error(f"{device_ip}: Connection timeout during CDP query")
+            return []
+        except NetmikoAuthenticationException:
+            self.logger.error(f"{device_ip}: Authentication failed during CDP query")
+            return []
+        except Exception as e:
+            self.logger.error(f"{device_ip}: Error querying CDP: {e}")
+            return []
+
     def snmp_discover_devices(self, subnet, snmp_version='2c', community='public',
                              v3_user=None, v3_auth_protocol='SHA', v3_auth_pass=None,
                              v3_priv_protocol='AES', v3_priv_pass=None, v3_level='authPriv'):
