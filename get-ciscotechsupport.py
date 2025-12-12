@@ -14,13 +14,13 @@
 #     Kismet Agbasi (Github: kismetgerald Email: KismetG17@gmail.com)
 #     
 # VERSION:
-#     1.0.0-alpha2
+#     0.0.3
 #
 # CREATED:
 #     December 4, 2025
 #
 # LAST UPDATED:
-#     December 10, 2025
+#     December 12, 2025
 #
 # DEPENDENCIES:
 #     - Python 3.6+
