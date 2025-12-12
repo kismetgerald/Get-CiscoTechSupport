@@ -450,8 +450,6 @@ function Start-ServiceAccountCredentialSetup {
         Write-Host ""
     }
     
-    $credSetupCommand = "Set-Location '$InstallPath'; Write-Host ''; Write-Host 'Cisco Device Credential Setup' -ForegroundColor Cyan; Write-Host ('=' * 50) -ForegroundColor Cyan; Write-Host ''; Write-Host 'You will be prompted for:' -ForegroundColor White; Write-Host '  - Device Username (for SSH/Telnet)' -ForegroundColor Gray; Write-Host '  - Device Password' -ForegroundColor Gray; Write-Host '  - Enable Password (for privilege 15)' -ForegroundColor Gray; Write-Host ''; & '.\python.exe' '$PythonScript' --save-credentials; Write-Host ''; Write-Host 'Setup complete. Press Enter to close this window...' -ForegroundColor Green; Read-Host"
-    
     Write-Host ""
     Write-Host "Launching credential setup as: $($ServiceAccountCred.UserName)" -ForegroundColor Cyan
     Write-Host ""
@@ -463,60 +461,157 @@ function Start-ServiceAccountCredentialSetup {
     Write-Host "NOTE: These can be different from OR the same as the service account" -ForegroundColor Cyan
     Write-Host "      depending on your RADIUS/TACACS+ configuration." -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "After completing the prompts, press Enter to close the new window." -ForegroundColor White
-    Write-Host ""
-    Write-Host "Press any key to launch the credential setup window..." -ForegroundColor Yellow
-    $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
     
-    Write-Host ""
+    $maxAttempts = 3
+    $attempt = 0
+    $launchSuccess = $false
     
-    try {
-        $username = $ServiceAccountCred.UserName
-        $tempScriptPath = Join-Path $env:TEMP "cisco-cred-setup-$(Get-Random).ps1"
+    while ($attempt -lt $maxAttempts -and -not $launchSuccess) {
+        $attempt++
         
-        $scriptContent = @"
-`$password = Read-Host -AsSecureString -Prompt "Enter password for $username"
-`$cred = New-Object System.Management.Automation.PSCredential('$username', `$password)
-Start-Process powershell.exe -Credential `$cred -ArgumentList '-NoExit','-Command',"$credSetupCommand" -Wait
-Remove-Item '$tempScriptPath' -Force -ErrorAction SilentlyContinue
+        if ($attempt -gt 1) {
+            Write-Host ""
+            Write-Host "Attempt $attempt of $maxAttempts" -ForegroundColor Yellow
+        }
+        
+        Write-Host "Enter password for service account: $($ServiceAccountCred.UserName)" -ForegroundColor Cyan
+        $userPassword = Read-Host -AsSecureString
+        
+        if ($userPassword.Length -eq 0) {
+            Write-Host "Password cannot be empty. Please try again." -ForegroundColor Red
+            continue
+        }
+        
+        $tempCred = New-Object System.Management.Automation.PSCredential($ServiceAccountCred.UserName, $userPassword)
+        
+        # Create a script block for the credential setup
+        $credSetupScript = @"
+Set-Location '$InstallPath'
+Write-Host ''
+Write-Host 'Cisco Device Credential Setup' -ForegroundColor Cyan
+Write-Host ('=' * 60) -ForegroundColor Cyan
+Write-Host ''
+Write-Host 'Service Account: $($ServiceAccountCred.UserName)' -ForegroundColor White
+Write-Host 'Install Path: $InstallPath' -ForegroundColor White
+Write-Host ''
+Write-Host 'You will now be prompted for Cisco device credentials.' -ForegroundColor Yellow
+Write-Host 'These credentials will be encrypted and saved to .cisco_credentials' -ForegroundColor Gray
+Write-Host ''
+Write-Host 'Enter the following:' -ForegroundColor White
+Write-Host '  1. Device Username (for SSH/Telnet authentication)' -ForegroundColor Gray
+Write-Host '  2. Device Password' -ForegroundColor Gray
+Write-Host '  3. Enable Password (for privilege 15 access)' -ForegroundColor Gray
+Write-Host ''
+
+& '.\python.exe' '$script:PythonScriptName' --save-credentials
+
+Write-Host ''
+if (Test-Path '.cisco_credentials') {
+    `$fileSize = (Get-Item '.cisco_credentials').Length
+    if (`$fileSize -gt 0) {
+        Write-Host 'SUCCESS: Credential file created' -ForegroundColor Green
+        Write-Host "Size: `$fileSize bytes" -ForegroundColor Gray
+    }
+    else {
+        Write-Host 'WARNING: Credential file is empty' -ForegroundColor Yellow
+    }
+}
+else {
+    Write-Host 'WARNING: Credential file was not created' -ForegroundColor Yellow
+}
+
+Write-Host ''
+Write-Host 'Press Enter to close this window and return to installation...' -ForegroundColor Cyan
+Read-Host
 "@
         
-        Set-Content -Path $tempScriptPath -Value $scriptContent -Force
-        Write-InstallLog -Message "Launching credential setup via runas" -Level INFO
+        $tempScriptPath = Join-Path $env:TEMP "cisco-cred-setup-$(Get-Random).ps1"
         
-        Start-Process powershell.exe -ArgumentList "-ExecutionPolicy Bypass -File `"$tempScriptPath`"" -Wait
-        
-        Write-Host ""
-        Write-Host "Credential setup process completed" -ForegroundColor Green
-        Write-InstallLog -Message "Credential setup process finished" -Level SUCCESS
-        
-    }
-    catch {
-        Write-Host "Error during credential setup: $_" -ForegroundColor Red
-        Write-InstallLog -Message "Credential setup failed: $_" -Level ERROR
-    }
-    finally {
-        if ($needsRestore) {
+        try {
+            Set-Content -Path $tempScriptPath -Value $credSetupScript -Force
+            Write-InstallLog -Message "Launching credential setup window (attempt $attempt)" -Level INFO
             Write-Host ""
-            Write-Host "Restoring STIG compliance..." -ForegroundColor Cyan
-            Write-InstallLog -Message "Stopping and disabling Secondary Logon service" -Level INFO
+            Write-Host "Launching credential setup window..." -ForegroundColor Cyan
             
-            if (Set-SecondaryLogonService -StartType Disabled -StopService) {
-                Write-Host "Secondary Logon service stopped and disabled (STIG compliant)" -ForegroundColor Green
+            # Use Start-Process with -Credential to launch as the service account
+            $processParams = @{
+                FilePath = "powershell.exe"
+                ArgumentList = @(
+                    "-NoProfile"
+                    "-ExecutionPolicy", "Bypass"
+                    "-File", "`"$tempScriptPath`""
+                )
+                Credential = $tempCred
+                Wait = $true
+                WindowStyle = "Normal"
+                ErrorAction = "Stop"
+            }
+            
+            Start-Process @processParams
+            
+            Write-Host ""
+            Write-Host "Credential setup window closed" -ForegroundColor Green
+            Write-InstallLog -Message "Credential setup completed successfully" -Level SUCCESS
+            $launchSuccess = $true
+            
+        }
+        catch {
+            if ($_.Exception.Message -like "*password*" -or $_.Exception.Message -like "*1326*") {
+                Write-Host ""
+                Write-Host "ERROR: Incorrect password for $($ServiceAccountCred.UserName)" -ForegroundColor Red
+                Write-InstallLog -Message "Password authentication failed (attempt $attempt)" -Level WARNING
                 
-                # Final verification
-                $finalCheck = Get-Service -Name "seclogon"
-                Write-Host "  Status: $($finalCheck.Status)" -ForegroundColor Gray
-                Write-Host "  Startup Type: $($finalCheck.StartType)" -ForegroundColor Gray
-                Write-InstallLog -Message "Secondary Logon service verified: Status=$($finalCheck.Status), StartType=$($finalCheck.StartType)" -Level SUCCESS
+                if ($attempt -lt $maxAttempts) {
+                    Write-Host "Please try again..." -ForegroundColor Yellow
+                }
+                else {
+                    Write-Host ""
+                    Write-Host "Maximum password attempts reached" -ForegroundColor Red
+                    Write-InstallLog -Message "Max password attempts reached - credential setup failed" -Level ERROR
+                }
             }
             else {
-                Write-Host "WARNING: Failed to restore Secondary Logon service" -ForegroundColor Red
-                Write-Host "MANUAL ACTION REQUIRED to maintain STIG compliance:" -ForegroundColor Yellow
-                Write-Host "  Stop-Service -Name seclogon -Force" -ForegroundColor Yellow
-                Write-Host "  Set-Service -Name seclogon -StartupType Disabled" -ForegroundColor Yellow
-                Write-InstallLog -Message "Failed to restore Secondary Logon service - manual intervention required" -Level ERROR
+                Write-Host ""
+                Write-Host "ERROR: Failed to launch credential setup: $($_.Exception.Message)" -ForegroundColor Red
+                Write-InstallLog -Message "Credential setup launch failed: $_" -Level ERROR
+                break
             }
+        }
+        finally {
+            if (Test-Path $tempScriptPath) {
+                Remove-Item $tempScriptPath -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+    
+    if (-not $launchSuccess) {
+        Write-Host ""
+        Write-Host "Automated credential setup could not be completed" -ForegroundColor Yellow
+        Write-Host "Please use the manual method in the NEXT STEPS section" -ForegroundColor Yellow
+        Write-InstallLog -Message "Automated credential setup failed after $attempt attempts" -Level ERROR
+    }
+    
+    # Restore service if needed (moved inside try/finally is no longer needed since we handle it here)
+    if ($needsRestore) {
+        Write-Host ""
+        Write-Host "Restoring STIG compliance..." -ForegroundColor Cyan
+        Write-InstallLog -Message "Stopping and disabling Secondary Logon service" -Level INFO
+        
+        if (Set-SecondaryLogonService -StartType Disabled -StopService) {
+            Write-Host "Secondary Logon service stopped and disabled (STIG compliant)" -ForegroundColor Green
+            
+            # Final verification
+            $finalCheck = Get-Service -Name "seclogon"
+            Write-Host "  Status: $($finalCheck.Status)" -ForegroundColor Gray
+            Write-Host "  Startup Type: $($finalCheck.StartType)" -ForegroundColor Gray
+            Write-InstallLog -Message "Secondary Logon service verified: Status=$($finalCheck.Status), StartType=$($finalCheck.StartType)" -Level SUCCESS
+        }
+        else {
+            Write-Host "WARNING: Failed to restore Secondary Logon service" -ForegroundColor Red
+            Write-Host "MANUAL ACTION REQUIRED to maintain STIG compliance:" -ForegroundColor Yellow
+            Write-Host "  Stop-Service -Name seclogon -Force" -ForegroundColor Yellow
+            Write-Host "  Set-Service -Name seclogon -StartupType Disabled" -ForegroundColor Yellow
+            Write-InstallLog -Message "Failed to restore Secondary Logon service - manual intervention required" -Level ERROR
         }
     }
     
