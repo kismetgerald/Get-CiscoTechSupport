@@ -1469,11 +1469,29 @@ function Install-CiscoCollector {
         }
         
         # Next step: Device list or test
+        # Next step: Device list or test
         if ($isDiscoveryMode) {
             Write-Host "$stepNumber. Test the collection manually (as the service account):" -ForegroundColor White
             Write-Host "   Using the same runas/PsExec method from step 1:" -ForegroundColor Gray
             Write-Host "   cd `"$InstallPath`"" -ForegroundColor DarkGray
-            Write-Host "   .\python.exe $script:PythonScriptName --discover" -ForegroundColor DarkGray
+            
+            # Provide appropriate test command based on discovery method
+            if ($taskArguments -like "*--method cdp*") {
+                Write-Host "   .\python.exe $script:PythonScriptName --discover --method cdp" -ForegroundColor DarkGray
+            }
+            elseif ($taskArguments -like "*--method snmp*") {
+                Write-Host "   .\python.exe $script:PythonScriptName --discover --method snmp --subnet <your_subnet>" -ForegroundColor DarkGray
+            }
+            elseif ($taskArguments -like "*--method arp*") {
+                Write-Host "   .\python.exe $script:PythonScriptName --discover --method arp" -ForegroundColor DarkGray
+            }
+            elseif ($taskArguments -like "*--method hybrid*") {
+                Write-Host "   .\python.exe $script:PythonScriptName --discover --method hybrid" -ForegroundColor DarkGray
+            }
+            else {
+                # Fallback to generic discover command
+                Write-Host "   .\python.exe $script:PythonScriptName --discover" -ForegroundColor DarkGray
+            }
         }
         elseif (Test-Path $devicesFilePath) {
             Write-Host "$stepNumber. Verify the device list file was created correctly:" -ForegroundColor White
