@@ -1469,7 +1469,6 @@ function Install-CiscoCollector {
         }
         
         # Next step: Device list or test
-        # Next step: Device list or test
         if ($isDiscoveryMode) {
             Write-Host "$stepNumber. Test the collection manually (as the service account):" -ForegroundColor White
             Write-Host "   Using the same runas/PsExec method from step 1:" -ForegroundColor Gray
