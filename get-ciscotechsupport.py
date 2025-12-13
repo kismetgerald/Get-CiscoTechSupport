@@ -442,20 +442,43 @@ def get_default_gateway():
     try:
         if IS_WINDOWS:
             # Windows: Use 'route print' command
-            result = subprocess.run(['route', 'print', '0.0.0.0'], 
+            result = subprocess.run(['route', 'print'], 
                                   capture_output=True, text=True, timeout=5)
-            # Look for line with 0.0.0.0 and extract gateway
-            for line in result.stdout.split('\n'):
-                if '0.0.0.0' in line:
-                    parts = line.split()
-                    # Gateway is typically the 3rd or 4th column
-                    for part in parts:
-                        try:
-                            ip = ipaddress.ip_address(part)
-                            if not ip.is_loopback and not ip.is_multicast:
-                                return str(ip)
-                        except ValueError:
-                            continue
+            
+            # Look for the "Active Routes" section and find default route (0.0.0.0)
+            lines = result.stdout.split('\n')
+            in_active_routes = False
+            
+            for line in lines:
+                # Find the Active Routes section
+                if 'Active Routes' in line:
+                    in_active_routes = True
+                    continue
+                
+                # Skip until we're in Active Routes section
+                if not in_active_routes:
+                    continue
+                
+                # Stop if we've left the Active Routes section
+                if line.strip() == '' or '====' in line:
+                    if 'Persistent Routes' in line or 'IPv6' in line:
+                        break
+                
+                # Look for lines with 0.0.0.0 destination (default route)
+                # Format: Network Destination    Netmask          Gateway       Interface  Metric
+                #         0.0.0.0                0.0.0.0          192.168.1.1   192.168.1.100  35
+                parts = line.split()
+                
+                if len(parts) >= 3 and parts[0] == '0.0.0.0' and parts[1] == '0.0.0.0':
+                    # The gateway is in the 3rd column (index 2)
+                    gateway = parts[2]
+                    try:
+                        ip = ipaddress.ip_address(gateway)
+                        # Make sure it's not 0.0.0.0 and is a valid unicast address
+                        if not ip.is_unspecified and not ip.is_loopback and not ip.is_multicast:
+                            return str(ip)
+                    except ValueError:
+                        continue
         
         elif IS_LINUX:
             # Linux: Use 'ip route' command
