@@ -664,6 +664,10 @@ class CiscoCollector:
             return []
         
         discovered_ips = set()
+        # ADD THE GATEWAY ITSELF TO THE DISCOVERED DEVICES LIST
+        discovered_ips.add(gateway_ip)
+        self.logger.info(f"Added default gateway to device list: {gateway_ip}")
+        
         processed_ips = set()
         to_process = [(gateway_ip, 0)]  # (ip, depth) tuples
         
