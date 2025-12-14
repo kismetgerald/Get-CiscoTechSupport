@@ -14,13 +14,13 @@
 #     Kismet Agbasi (Github: kismetgerald Email: KismetG17@gmail.com)
 #     
 # VERSION:
-#     1.0.0-alpha2
+#     0.0.3
 #
 # CREATED:
 #     December 4, 2025
 #
 # LAST UPDATED:
-#     December 10, 2025
+#     December 12, 2025
 #
 # DEPENDENCIES:
 #     - Python 3.6+
@@ -432,6 +432,128 @@ class CredentialManager:
 
 # endregion
 
+# region Helper Functions for Discovery
+
+def get_default_gateway():
+    """
+    Get the default gateway IP address from the system.
+    Works cross-platform (Windows, Linux, macOS)
+    """
+    try:
+        if IS_WINDOWS:
+            # Windows: Use 'route print' command
+            result = subprocess.run(['route', 'print'], 
+                                  capture_output=True, text=True, timeout=5)
+            
+            # Look for the "Active Routes" section and find default route (0.0.0.0)
+            lines = result.stdout.split('\n')
+            in_active_routes = False
+            
+            for line in lines:
+                # Find the Active Routes section
+                if 'Active Routes' in line:
+                    in_active_routes = True
+                    continue
+                
+                # Skip until we're in Active Routes section
+                if not in_active_routes:
+                    continue
+                
+                # Stop if we've left the Active Routes section
+                if line.strip() == '' or '====' in line:
+                    if 'Persistent Routes' in line or 'IPv6' in line:
+                        break
+                
+                # Look for lines with 0.0.0.0 destination (default route)
+                # Format: Network Destination    Netmask          Gateway       Interface  Metric
+                #         0.0.0.0                0.0.0.0          192.168.1.1   192.168.1.100  35
+                parts = line.split()
+                
+                if len(parts) >= 3 and parts[0] == '0.0.0.0' and parts[1] == '0.0.0.0':
+                    # The gateway is in the 3rd column (index 2)
+                    gateway = parts[2]
+                    try:
+                        ip = ipaddress.ip_address(gateway)
+                        # Make sure it's not 0.0.0.0 and is a valid unicast address
+                        if not ip.is_unspecified and not ip.is_loopback and not ip.is_multicast:
+                            return str(ip)
+                    except ValueError:
+                        continue
+        
+        elif IS_LINUX:
+            # Linux: Use 'ip route' command
+            result = subprocess.run(['ip', 'route', 'show', 'default'], 
+                                  capture_output=True, text=True, timeout=5)
+            # Format: default via 192.168.1.1 dev eth0
+            match = re.search(r'default via (\d+\.\d+\.\d+\.\d+)', result.stdout)
+            if match:
+                return match.group(1)
+        
+        elif IS_MAC:
+            # macOS: Use 'route -n get default' command
+            result = subprocess.run(['route', '-n', 'get', 'default'], 
+                                  capture_output=True, text=True, timeout=5)
+            # Look for 'gateway: x.x.x.x'
+            match = re.search(r'gateway:\s*(\d+\.\d+\.\d+\.\d+)', result.stdout)
+            if match:
+                return match.group(1)
+    
+    except Exception as e:
+        pass
+    
+    return None
+
+def parse_cdp_neighbors(cdp_output):
+    """
+    Parse 'show cdp neighbors detail' output to extract device information.
+    Returns list of dicts with 'hostname', 'ip', and 'platform' keys.
+    """
+    devices = []
+    current_device = {}
+    
+    lines = cdp_output.split('\n')
+    
+    for line in lines:
+        line = line.strip()
+        
+        # Device ID marks start of new neighbor entry
+        if line.startswith('Device ID:'):
+            if current_device and 'ip' in current_device:
+                devices.append(current_device)
+            current_device = {}
+            device_id = line.split(':', 1)[1].strip()
+            # Remove domain suffix if present
+            hostname = device_id.split('.')[0]
+            current_device['hostname'] = hostname
+        
+        # IP address - look for various formats
+        elif 'IP address:' in line or 'IPv4 Address:' in line:
+            # Format: "  IP address: 10.1.1.1" or "Entry address(es): \n  IP address: 10.1.1.1"
+            ip_match = re.search(r'(\d+\.\d+\.\d+\.\d+)', line)
+            if ip_match:
+                current_device['ip'] = ip_match.group(1)
+        
+        elif 'Management address' in line:
+            # Some IOS versions use "Management address(es):"
+            ip_match = re.search(r'(\d+\.\d+\.\d+\.\d+)', line)
+            if ip_match:
+                current_device['ip'] = ip_match.group(1)
+        
+        # Platform information
+        elif line.startswith('Platform:'):
+            platform = line.split(':', 1)[1].strip()
+            # Remove capabilities info if present
+            platform = platform.split(',')[0].strip()
+            current_device['platform'] = platform
+    
+    # Don't forget the last device
+    if current_device and 'ip' in current_device:
+        devices.append(current_device)
+    
+    return devices
+
+# endregion
+
 # region Cisco Collector Class
 
 class CiscoCollector:
@@ -510,6 +632,147 @@ class CiscoCollector:
     
     # region Device Discovery Methods
     
+    # region Device Discovery Methods
+    
+    def cdp_discover_devices(self, gateway_ip=None, recursive=False, max_depth=2):
+        """
+        Discover Cisco devices via CDP by querying the default gateway.
+        
+        Args:
+            gateway_ip: IP of gateway to query (auto-detect if None)
+            recursive: If True, recursively query discovered neighbors
+            max_depth: Maximum recursion depth (default: 2)
+        
+        Returns:
+            List of discovered device IP addresses
+        """
+        self.logger.info("Starting CDP-based device discovery")
+        
+        # Get gateway IP
+        if not gateway_ip:
+            gateway_ip = get_default_gateway()
+            if not gateway_ip:
+                self.logger.error("Could not determine default gateway")
+                return []
+            self.logger.info(f"Auto-detected default gateway: {gateway_ip}")
+        else:
+            self.logger.info(f"Using specified gateway: {gateway_ip}")
+        
+        # Test if gateway is reachable
+        if not self._test_connectivity(gateway_ip):
+            self.logger.error(f"Gateway {gateway_ip} is not reachable")
+            return []
+        
+        discovered_ips = set()
+        processed_ips = set()
+        to_process = [(gateway_ip, 0)]  # (ip, depth) tuples
+        
+        while to_process:
+            current_ip, depth = to_process.pop(0)
+            
+            # Skip if already processed
+            if current_ip in processed_ips:
+                continue
+            
+            # Skip if max depth reached
+            if depth > max_depth:
+                continue
+            
+            processed_ips.add(current_ip)
+            self.logger.info(f"Querying CDP on {current_ip} (depth: {depth})")
+            
+            # Query this device for CDP neighbors
+            neighbors = self._query_cdp_neighbors(current_ip)
+            
+            if neighbors:
+                self.logger.info(f"Found {len(neighbors)} CDP neighbor(s) on {current_ip}")
+                for neighbor in neighbors:
+                    neighbor_ip = neighbor.get('ip')
+                    hostname = neighbor.get('hostname', 'unknown')
+                    platform = neighbor.get('platform', 'unknown')
+                    
+                    if neighbor_ip:
+                        discovered_ips.add(neighbor_ip)
+                        self.logger.info(f"  - {hostname} ({neighbor_ip}) - {platform}")
+                        
+                        # Add to processing queue if recursive and not already processed
+                        if recursive and neighbor_ip not in processed_ips:
+                            to_process.append((neighbor_ip, depth + 1))
+            else:
+                self.logger.warning(f"No CDP neighbors found on {current_ip}")
+        
+        result = list(discovered_ips)
+        self.logger.info(f"CDP discovery complete: found {len(result)} device(s)")
+        return result
+    
+    def _test_connectivity(self, ip, timeout=2):
+        """Test if an IP is reachable via ICMP ping"""
+        try:
+            if IS_WINDOWS:
+                result = subprocess.run(['ping', '-n', '1', '-w', str(timeout * 1000), ip],
+                                      capture_output=True, timeout=timeout + 1)
+            else:
+                result = subprocess.run(['ping', '-c', '1', '-W', str(timeout), ip],
+                                      capture_output=True, timeout=timeout + 1)
+            return result.returncode == 0
+        except:
+            return False
+    
+    def _query_cdp_neighbors(self, device_ip):
+        """
+        Connect to a device and retrieve CDP neighbors.
+        Returns list of neighbor dicts or empty list on failure.
+        """
+        device = {
+            'device_type': self.device_type,
+            'host': device_ip,
+            'username': self.username,
+            'password': self.password,
+            'secret': self.enable_secret,
+            'timeout': self.connection_timeout,
+            'session_timeout': self.session_timeout,
+        }
+        
+        try:
+            # Connect to device
+            connection = ConnectHandler(**device)
+            
+            # Enter enable mode if needed
+            if not connection.check_enable_mode():
+                connection.enable()
+            
+            # Check if it's a Cisco device
+            version_output = connection.send_command("show version", read_timeout=30)
+            if 'cisco' not in version_output.lower():
+                self.logger.warning(f"{device_ip}: Not a Cisco device")
+                connection.disconnect()
+                return []
+            
+            # Get CDP neighbors detail
+            cdp_output = connection.send_command("show cdp neighbors detail", read_timeout=60)
+            
+            # Check if CDP is enabled
+            if 'cdp is not enabled' in cdp_output.lower():
+                self.logger.warning(f"{device_ip}: CDP is not enabled")
+                connection.disconnect()
+                return []
+            
+            # Parse the output
+            neighbors = parse_cdp_neighbors(cdp_output)
+            
+            connection.disconnect()
+            return neighbors
+            
+        except NetmikoTimeoutException:
+            self.logger.error(f"{device_ip}: Connection timeout during CDP query")
+            return []
+        except NetmikoAuthenticationException:
+            self.logger.error(f"{device_ip}: Authentication failed during CDP query")
+            return []
+        except Exception as e:
+            self.logger.error(f"{device_ip}: Error querying CDP: {e}")
+            return []
+
     def snmp_discover_devices(self, subnet, snmp_version='2c', community='public',
                              v3_user=None, v3_auth_protocol='SHA', v3_auth_pass=None,
                              v3_priv_protocol='AES', v3_priv_pass=None, v3_level='authPriv'):
@@ -720,14 +983,40 @@ class CiscoCollector:
         self.logger.info(f"ARP discovery found {len(devices)} potential devices")
         return devices
     
-    def discover_devices(self, subnet=None, snmp_version='2c', snmp_community='public',
+    def discover_devices(self, method='cdp', gateway_ip=None, subnet=None, 
+                        snmp_version='2c', snmp_community='public',
                         v3_user=None, v3_auth_protocol='SHA', v3_auth_pass=None,
                         v3_priv_protocol='AES', v3_priv_pass=None, v3_level='authPriv'):
-        """Main discovery function with SNMP primary and ARP fallback"""
+        """
+        Main discovery function supporting multiple methods.
+        
+        Args:
+            method: Discovery method - 'cdp', 'snmp', 'arp', or 'hybrid'
+            gateway_ip: Gateway IP for CDP discovery (auto-detect if None)
+            subnet: Subnet for SNMP discovery
+            snmp_version: SNMP version ('2c' or '3')
+            Other args: SNMP configuration parameters
+        
+        Returns:
+            List of discovered device IPs
+        """
         devices = []
         
-        if subnet:
-            # Try SNMP first
+        if method == 'cdp':
+            # CDP discovery from default gateway
+            self.logger.info("Using CDP discovery method")
+            devices = self.cdp_discover_devices(gateway_ip=gateway_ip, recursive=False)
+            
+            if not devices:
+                self.logger.warning("CDP discovery found no devices")
+        
+        elif method == 'snmp':
+            # SNMP-based subnet scan
+            self.logger.info("Using SNMP discovery method")
+            if not subnet:
+                self.logger.error("SNMP discovery requires --subnet parameter")
+                return []
+            
             devices = self.snmp_discover_devices(
                 subnet, snmp_version, snmp_community,
                 v3_user, v3_auth_protocol, v3_auth_pass,
@@ -735,12 +1024,44 @@ class CiscoCollector:
             )
             
             if not devices:
-                self.logger.warning("SNMP discovery found no devices, falling back to ARP")
-                devices = self.arp_discover_devices()
-        else:
-            # No subnet specified, use ARP only
+                self.logger.warning("SNMP discovery found no devices")
+        
+        elif method == 'arp':
+            # ARP table discovery
+            self.logger.info("Using ARP discovery method")
             devices = self.arp_discover_devices()
             
+            if not devices:
+                self.logger.warning("ARP discovery found no devices")
+        
+        elif method == 'hybrid':
+            # Hybrid: CDP + SNMP subnet scan
+            self.logger.info("Using hybrid discovery method (CDP + SNMP)")
+            
+            # Try CDP first
+            cdp_devices = self.cdp_discover_devices(gateway_ip=gateway_ip, recursive=False)
+            self.logger.info(f"CDP discovered {len(cdp_devices)} device(s)")
+            
+            # Then SNMP if subnet provided
+            snmp_devices = []
+            if subnet:
+                snmp_devices = self.snmp_discover_devices(
+                    subnet, snmp_version, snmp_community,
+                    v3_user, v3_auth_protocol, v3_auth_pass,
+                    v3_priv_protocol, v3_priv_pass, v3_level
+                )
+                self.logger.info(f"SNMP discovered {len(snmp_devices)} device(s)")
+            else:
+                self.logger.warning("No subnet provided for SNMP portion of hybrid discovery")
+            
+            # Combine results
+            devices = list(set(cdp_devices + snmp_devices))
+            self.logger.info(f"Hybrid discovery total: {len(devices)} unique device(s)")
+        
+        else:
+            self.logger.error(f"Unknown discovery method: {method}")
+            return []
+        
         return list(set(devices))  # Remove duplicates
     
     # endregion
@@ -948,6 +1269,11 @@ Examples:
     input_group.add_argument('--discover', action='store_true', help='Auto-discover devices')
     
     # Discovery options
+    parser.add_argument('--method', choices=['cdp', 'snmp', 'arp', 'hybrid'],
+                       default='cdp',
+                       help='Discovery method: cdp (default, uses gateway CDP), snmp (subnet scan), '
+                            'arp (local ARP table), hybrid (cdp + snmp)')
+    parser.add_argument('--gateway', help='Gateway IP for CDP discovery (auto-detect if not specified)')
     parser.add_argument('--subnet', help='Subnet for SNMP discovery (e.g., 192.168.1.0/24)')
     parser.add_argument('--snmp-version', choices=['2c', '3'], default=DEFAULT_SNMP_VERSION,
                        help=f'SNMP version (default: {DEFAULT_SNMP_VERSION})')
@@ -1094,6 +1420,8 @@ Examples:
         devices = load_devices_from_file(args.file)
     elif args.discover:
         devices = collector.discover_devices(
+            method=args.method,
+            gateway_ip=args.gateway,
             subnet=args.subnet,
             snmp_version=args.snmp_version,
             snmp_community=args.snmp_community,

@@ -78,8 +78,8 @@
 
 .NOTES
     Author: Kismet Agbasi (Github: kismetgerald Email: KismetG17@gmail.com)
-    Version: 1.0.0-alpha3
-    Date: December 11, 2025
+    Version: 0.0.3
+    Date: December 12, 2025
     Requires: PowerShell 5.1+ with Administrator privileges
     
     IMPORTANT: This script is designed for embedded Python distributions.
@@ -1125,96 +1125,169 @@ function Install-CiscoCollector {
             
             if ($modeChoice -eq '2') {
                 $isDiscoveryMode = $true
-                Write-Host "`nDiscovery Configuration" -ForegroundColor Cyan
-                $subnet = Read-Host "Enter subnet for discovery (e.g., 192.168.1.0/24)"
+                Write-Host "`nDiscovery Method" -ForegroundColor Cyan
+                Write-Host "=========================================" -ForegroundColor Cyan
+                Write-Host "  1. CDP Discovery - Query default gateway for network topology (Recommended)" -ForegroundColor White
+                Write-Host "  2. SNMP Subnet Scan - Scan specific subnet via SNMP" -ForegroundColor White
+                Write-Host "  3. ARP Discovery - Parse local ARP table" -ForegroundColor White
+                Write-Host "  4. Hybrid - CDP + SNMP (most thorough)" -ForegroundColor White
+                $discoveryMethod = Read-Host "`nSelection [1]"
+                if ([string]::IsNullOrWhiteSpace($discoveryMethod)) { $discoveryMethod = '1' }
                 
-                if ([string]::IsNullOrWhiteSpace($subnet)) {
-                    Write-InstallLog -Message "No subnet provided, using ARP discovery" -Level WARNING
-                    $taskArguments = "--discover"
-                } else {
-                    $taskArguments = "--discover --subnet `"$subnet`""
-                    Write-InstallLog -Message "Discovery mode configured for subnet: $subnet" -Level INFO
-                }
-                
-                Write-Host "`nSNMP Configuration" -ForegroundColor Cyan
-                Write-Host "  1. SNMP v2c (community string)" -ForegroundColor White
-                Write-Host "  2. SNMP v3 (username/auth)" -ForegroundColor White
-                Write-Host "  3. Skip SNMP (ARP only)" -ForegroundColor White
-                $snmpChoice = Read-Host "`nSelection [1]"
-                if ([string]::IsNullOrWhiteSpace($snmpChoice)) { $snmpChoice = '1' }
-                
-                if ($snmpChoice -eq '1') {
-                    $snmpCommunity = Read-Host "SNMP community string [public]"
-                    if ([string]::IsNullOrWhiteSpace($snmpCommunity)) { $snmpCommunity = 'public' }
-                    $taskArguments += " --snmp-version 2c --snmp-community `"$snmpCommunity`""
-                    Write-InstallLog -Message "SNMP v2c configured with community: $snmpCommunity" -Level INFO
-                }
-                elseif ($snmpChoice -eq '2') {
-                    Write-Host "`nSNMP v3 Configuration" -ForegroundColor Cyan
-                    
-                    $snmpUser = Read-Host "SNMPv3 username"
-                    if ([string]::IsNullOrWhiteSpace($snmpUser)) {
-                        Write-InstallLog -Message "SNMPv3 username required" -Level ERROR
-                        throw "SNMPv3 username is required"
+                switch ($discoveryMethod) {
+                    '1' {
+                        # CDP Discovery
+                        Write-Host "`nCDP Discovery Configuration" -ForegroundColor Cyan
+                        Write-Host "This method queries your default gateway via CDP to discover" -ForegroundColor Gray
+                        Write-Host "the network topology. This is the most reliable method for" -ForegroundColor Gray
+                        Write-Host "discovering Cisco devices across VLANs." -ForegroundColor Gray
+                        Write-Host ""
+                        
+                        $gatewayIP = Read-Host "Default gateway IP (leave blank to auto-detect)"
+                        
+                        if ([string]::IsNullOrWhiteSpace($gatewayIP)) {
+                            $taskArguments = "--discover --method cdp"
+                            Write-InstallLog -Message "CDP discovery configured with auto-detect gateway" -Level INFO
+                        }
+                        else {
+                            $taskArguments = "--discover --method cdp --gateway `"$gatewayIP`""
+                            Write-InstallLog -Message "CDP discovery configured with gateway: $gatewayIP" -Level INFO
+                        }
                     }
                     
-                    Write-Host "`nSecurity Level:" -ForegroundColor Cyan
-                    Write-Host "  1. noAuthNoPriv - No authentication, no encryption" -ForegroundColor White
-                    Write-Host "  2. authNoPriv - Authentication only, no encryption" -ForegroundColor White
-                    Write-Host "  3. authPriv - Authentication and encryption" -ForegroundColor White
-                    $secLevel = Read-Host "Selection [3]"
-                    if ([string]::IsNullOrWhiteSpace($secLevel)) { $secLevel = '3' }
-                    
-                    if ($secLevel -eq '1') {
-                        $taskArguments += " --snmp-version 3 --snmpv3-user `"$snmpUser`" --snmpv3-level noAuthNoPriv"
-                        Write-InstallLog -Message "SNMPv3 configured (noAuthNoPriv): user=$snmpUser" -Level INFO
+                    '2' {
+                        # SNMP Subnet Scan
+                        Write-Host "`nSNMP Subnet Scan Configuration" -ForegroundColor Cyan
+                        $subnet = Read-Host "Enter subnet for discovery (e.g., 192.168.1.0/24)"
+                        
+                        if ([string]::IsNullOrWhiteSpace($subnet)) {
+                            Write-InstallLog -Message "No subnet provided for SNMP scan" -Level ERROR
+                            throw "Subnet is required for SNMP discovery method"
+                        }
+                        
+                        $taskArguments = "--discover --method snmp --subnet `"$subnet`""
+                        Write-InstallLog -Message "SNMP discovery configured for subnet: $subnet" -Level INFO
                     }
-                    elseif ($secLevel -eq '2') {
-                        Write-Host "`nAuthentication Protocol:" -ForegroundColor Cyan
-                        Write-Host "  1. MD5" -ForegroundColor White
-                        Write-Host "  2. SHA" -ForegroundColor White
-                        $authProto = Read-Host "Selection [2]"
-                        if ([string]::IsNullOrWhiteSpace($authProto)) { $authProto = '2' }
-                        $authProtocol = if ($authProto -eq '1') { 'MD5' } else { 'SHA' }
+                    
+                    '3' {
+                        # ARP Discovery
+                        Write-Host "`nARP Discovery Configuration" -ForegroundColor Cyan
+                        Write-Host "This method parses the local ARP table to find devices." -ForegroundColor Gray
+                        Write-Host "Note: Only discovers devices on the local subnet." -ForegroundColor Yellow
+                        Write-Host ""
                         
-                        $authPassword = Read-Host "Authentication password" -AsSecureString
-                        $authPasswordPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-                            [Runtime.InteropServices.Marshal]::SecureStringToBSTR($authPassword))
+                        $taskArguments = "--discover --method arp"
+                        Write-InstallLog -Message "ARP discovery configured" -Level INFO
+                    }
+                    
+                    '4' {
+                        # Hybrid Discovery
+                        Write-Host "`nHybrid Discovery Configuration" -ForegroundColor Cyan
+                        Write-Host "This combines CDP and SNMP for the most thorough discovery." -ForegroundColor Gray
+                        Write-Host ""
                         
-                        $taskArguments += " --snmp-version 3 --snmpv3-user `"$snmpUser`" --snmpv3-level authNoPriv --snmpv3-auth-protocol `"$authProtocol`" --snmpv3-auth-password `"$authPasswordPlain`""
-                        Write-InstallLog -Message "SNMPv3 configured (authNoPriv): user=$snmpUser, auth=$authProtocol" -Level INFO
+                        $gatewayIP = Read-Host "Default gateway IP (leave blank to auto-detect)"
+                        $subnet = Read-Host "Subnet for SNMP scan (e.g., 192.168.1.0/24)"
+                        
+                        if ([string]::IsNullOrWhiteSpace($gatewayIP)) {
+                            $taskArguments = "--discover --method hybrid"
+                        }
+                        else {
+                            $taskArguments = "--discover --method hybrid --gateway `"$gatewayIP`""
+                        }
+                        
+                        if (-not [string]::IsNullOrWhiteSpace($subnet)) {
+                            $taskArguments += " --subnet `"$subnet`""
+                        }
+                        
+                        Write-InstallLog -Message "Hybrid discovery configured (CDP + SNMP)" -Level INFO
+                    }
+                }
+                
+                # SNMP Configuration (only for methods that use SNMP)
+                if ($discoveryMethod -in @('2', '4')) {
+                    Write-Host "`nSNMP Configuration" -ForegroundColor Cyan
+                    Write-Host "  1. SNMP v2c (community string)" -ForegroundColor White
+                    Write-Host "  2. SNMP v3 (username/auth)" -ForegroundColor White
+                    Write-Host "  3. Skip SNMP configuration (use defaults)" -ForegroundColor White
+                    $snmpChoice = Read-Host "`nSelection [1]"
+                    if ([string]::IsNullOrWhiteSpace($snmpChoice)) { $snmpChoice = '1' }
+
+                    if ($snmpChoice -eq '1') {
+                        $snmpCommunity = Read-Host "SNMP community string [public]"
+                        if ([string]::IsNullOrWhiteSpace($snmpCommunity)) { $snmpCommunity = 'public' }
+                        $taskArguments += " --snmp-version 2c --snmp-community `"$snmpCommunity`""
+                        Write-InstallLog -Message "SNMP v2c configured with community: $snmpCommunity" -Level INFO
+                    }
+                    elseif ($snmpChoice -eq '2') {
+                        Write-Host "`nSNMP v3 Configuration" -ForegroundColor Cyan
+                        
+                        $snmpUser = Read-Host "SNMPv3 username"
+                        if ([string]::IsNullOrWhiteSpace($snmpUser)) {
+                            Write-InstallLog -Message "SNMPv3 username required" -Level ERROR
+                            throw "SNMPv3 username is required"
+                        }
+                        
+                        Write-Host "`nSecurity Level:" -ForegroundColor Cyan
+                        Write-Host "  1. noAuthNoPriv - No authentication, no encryption" -ForegroundColor White
+                        Write-Host "  2. authNoPriv - Authentication only, no encryption" -ForegroundColor White
+                        Write-Host "  3. authPriv - Authentication and encryption" -ForegroundColor White
+                        $secLevel = Read-Host "Selection [3]"
+                        if ([string]::IsNullOrWhiteSpace($secLevel)) { $secLevel = '3' }
+                        
+                        if ($secLevel -eq '1') {
+                            $taskArguments += " --snmp-version 3 --snmpv3-user `"$snmpUser`" --snmpv3-level noAuthNoPriv"
+                            Write-InstallLog -Message "SNMPv3 configured (noAuthNoPriv): user=$snmpUser" -Level INFO
+                        }
+
+                        elseif ($secLevel -eq '2') {
+                            Write-Host "`nAuthentication Protocol:" -ForegroundColor Cyan
+                            Write-Host "  1. MD5" -ForegroundColor White
+                            Write-Host "  2. SHA" -ForegroundColor White
+                            $authProto = Read-Host "Selection [2]"
+                            if ([string]::IsNullOrWhiteSpace($authProto)) { $authProto = '2' }
+                            $authProtocol = if ($authProto -eq '1') { 'MD5' } else { 'SHA' }
+                            
+                            $authPassword = Read-Host "Authentication password" -AsSecureString
+                            $authPasswordPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+                                [Runtime.InteropServices.Marshal]::SecureStringToBSTR($authPassword))
+                            
+                            $taskArguments += " --snmp-version 3 --snmpv3-user `"$snmpUser`" --snmpv3-level authNoPriv --snmpv3-auth-protocol `"$authProtocol`" --snmpv3-auth-password `"$authPasswordPlain`""
+                            Write-InstallLog -Message "SNMPv3 configured (authNoPriv): user=$snmpUser, auth=$authProtocol" -Level INFO
+                        }
+
+                        else {
+                            Write-Host "`nAuthentication Protocol:" -ForegroundColor Cyan
+                            Write-Host "  1. MD5" -ForegroundColor White
+                            Write-Host "  2. SHA" -ForegroundColor White
+                            $authProto = Read-Host "Selection [2]"
+                            if ([string]::IsNullOrWhiteSpace($authProto)) { $authProto = '2' }
+                            $authProtocol = if ($authProto -eq '1') { 'MD5' } else { 'SHA' }
+                            
+                            $authPassword = Read-Host "Authentication password" -AsSecureString
+                            $authPasswordPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+                                [Runtime.InteropServices.Marshal]::SecureStringToBSTR($authPassword))
+                            
+                            Write-Host "`nPrivacy Protocol:" -ForegroundColor Cyan
+                            Write-Host "  1. DES" -ForegroundColor White
+                            Write-Host "  2. AES" -ForegroundColor White
+                            $privProto = Read-Host "Selection [2]"
+                            if ([string]::IsNullOrWhiteSpace($privProto)) { $privProto = '2' }
+                            $privProtocol = if ($privProto -eq '1') { 'DES' } else { 'AES' }
+                            
+                            $privPassword = Read-Host "Privacy password" -AsSecureString
+                            $privPasswordPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+                                [Runtime.InteropServices.Marshal]::SecureStringToBSTR($privPassword))
+                            
+                            $taskArguments += " --snmp-version 3 --snmpv3-user `"$snmpUser`" --snmpv3-level authPriv --snmpv3-auth-protocol `"$authProtocol`" --snmpv3-auth-password `"$authPasswordPlain`" --snmpv3-priv-protocol `"$privProtocol`" --snmpv3-priv-password `"$privPasswordPlain`""
+                            Write-InstallLog -Message "SNMPv3 configured (authPriv): user=$snmpUser, auth=$authProtocol, priv=$privProtocol" -Level INFO
+                        }
                     }
                     else {
-                        Write-Host "`nAuthentication Protocol:" -ForegroundColor Cyan
-                        Write-Host "  1. MD5" -ForegroundColor White
-                        Write-Host "  2. SHA" -ForegroundColor White
-                        $authProto = Read-Host "Selection [2]"
-                        if ([string]::IsNullOrWhiteSpace($authProto)) { $authProto = '2' }
-                        $authProtocol = if ($authProto -eq '1') { 'MD5' } else { 'SHA' }
-                        
-                        $authPassword = Read-Host "Authentication password" -AsSecureString
-                        $authPasswordPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-                            [Runtime.InteropServices.Marshal]::SecureStringToBSTR($authPassword))
-                        
-                        Write-Host "`nPrivacy Protocol:" -ForegroundColor Cyan
-                        Write-Host "  1. DES" -ForegroundColor White
-                        Write-Host "  2. AES" -ForegroundColor White
-                        $privProto = Read-Host "Selection [2]"
-                        if ([string]::IsNullOrWhiteSpace($privProto)) { $privProto = '2' }
-                        $privProtocol = if ($privProto -eq '1') { 'DES' } else { 'AES' }
-                        
-                        $privPassword = Read-Host "Privacy password" -AsSecureString
-                        $privPasswordPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-                            [Runtime.InteropServices.Marshal]::SecureStringToBSTR($privPassword))
-                        
-                        $taskArguments += " --snmp-version 3 --snmpv3-user `"$snmpUser`" --snmpv3-level authPriv --snmpv3-auth-protocol `"$authProtocol`" --snmpv3-auth-password `"$authPasswordPlain`" --snmpv3-priv-protocol `"$privProtocol`" --snmpv3-priv-password `"$privPasswordPlain`""
-                        Write-InstallLog -Message "SNMPv3 configured (authPriv): user=$snmpUser, auth=$authProtocol, priv=$privProtocol" -Level INFO
+                        Write-InstallLog -Message "SNMP configuration skipped, will use defaults" -Level INFO
                     }
                 }
-                else {
-                    Write-InstallLog -Message "SNMP configuration skipped, will use defaults" -Level INFO
-                }
-            }
+            } 
             else {
                 Write-Host "`nDevice List Configuration" -ForegroundColor Cyan
                 
@@ -1400,7 +1473,24 @@ function Install-CiscoCollector {
             Write-Host "$stepNumber. Test the collection manually (as the service account):" -ForegroundColor White
             Write-Host "   Using the same runas/PsExec method from step 1:" -ForegroundColor Gray
             Write-Host "   cd `"$InstallPath`"" -ForegroundColor DarkGray
-            Write-Host "   .\python.exe $script:PythonScriptName --discover" -ForegroundColor DarkGray
+            
+            # Provide appropriate test command based on discovery method
+            if ($taskArguments -like "*--method cdp*") {
+                Write-Host "   .\python.exe $script:PythonScriptName --discover --method cdp" -ForegroundColor DarkGray
+            }
+            elseif ($taskArguments -like "*--method snmp*") {
+                Write-Host "   .\python.exe $script:PythonScriptName --discover --method snmp --subnet <your_subnet>" -ForegroundColor DarkGray
+            }
+            elseif ($taskArguments -like "*--method arp*") {
+                Write-Host "   .\python.exe $script:PythonScriptName --discover --method arp" -ForegroundColor DarkGray
+            }
+            elseif ($taskArguments -like "*--method hybrid*") {
+                Write-Host "   .\python.exe $script:PythonScriptName --discover --method hybrid" -ForegroundColor DarkGray
+            }
+            else {
+                # Fallback to generic discover command
+                Write-Host "   .\python.exe $script:PythonScriptName --discover" -ForegroundColor DarkGray
+            }
         }
         elseif (Test-Path $devicesFilePath) {
             Write-Host "$stepNumber. Verify the device list file was created correctly:" -ForegroundColor White
