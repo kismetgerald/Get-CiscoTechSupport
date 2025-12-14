@@ -571,6 +571,9 @@ Write-Host 'Press Enter to close this window and return to installation...' -For
 Read-Host
 "@
         
+        # Use SystemDrive\Temp (shared system directory) instead of $env:TEMP (user-specific)
+        # because the service account running under Start-Process -Credential cannot access 
+        # the interactive user's AppData\Local\Temp directory
         $tempScriptPath = Join-Path $env:SystemDrive\Temp "cisco-cred-setup-$(Get-Random).ps1"
         
         try {
