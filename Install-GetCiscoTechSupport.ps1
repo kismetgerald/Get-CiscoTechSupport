@@ -487,38 +487,83 @@ function Start-ServiceAccountCredentialSetup {
         $tempCred = New-Object System.Management.Automation.PSCredential($ServiceAccountCred.UserName, $userPassword)
         
         $credSetupScript = @"
-Set-Location '$InstallPath'
-Write-Host ''
-Write-Host 'Cisco Device Credential Setup' -ForegroundColor Cyan
-Write-Host ('=' * 60) -ForegroundColor Cyan
-Write-Host ''
-Write-Host 'Service Account: $($ServiceAccountCred.UserName)' -ForegroundColor White
-Write-Host 'Install Path: $InstallPath' -ForegroundColor White
-Write-Host ''
-Write-Host 'You will now be prompted for Cisco device credentials.' -ForegroundColor Yellow
-Write-Host 'These credentials will be encrypted and saved to .cisco_credentials' -ForegroundColor Gray
-Write-Host ''
-Write-Host 'Enter the following:' -ForegroundColor White
-Write-Host '  1. Device Username (for SSH/Telnet authentication)' -ForegroundColor Gray
-Write-Host '  2. Device Password' -ForegroundColor Gray
-Write-Host '  3. Enable Password (for privilege 15 access)' -ForegroundColor Gray
-Write-Host ''
+`$ErrorActionPreference = 'Continue'
 
-& '.\python.exe' '$PythonScript' --save-credentials
-
-Write-Host ''
-if (Test-Path '.cisco_credentials') {
-    `$fileSize = (Get-Item '.cisco_credentials').Length
-    if (`$fileSize -gt 0) {
-        Write-Host 'SUCCESS: Credential file created' -ForegroundColor Green
-        Write-Host "Size: `$fileSize bytes" -ForegroundColor Gray
+try {
+    Set-Location '$InstallPath'
+    Write-Host ''
+    Write-Host 'Cisco Device Credential Setup' -ForegroundColor Cyan
+    Write-Host ('=' * 60) -ForegroundColor Cyan
+    Write-Host ''
+    Write-Host 'Service Account: $($ServiceAccountCred.UserName)' -ForegroundColor White
+    Write-Host 'Install Path: $InstallPath' -ForegroundColor White
+    Write-Host ''
+    
+    # Verify python.exe exists
+    if (-not (Test-Path '.\python.exe')) {
+        Write-Host 'ERROR: python.exe not found in current directory' -ForegroundColor Red
+        Write-Host "Current directory: `$(Get-Location)" -ForegroundColor Yellow
+        Write-Host ''
+        Write-Host 'Press Enter to close...' -ForegroundColor Yellow
+        Read-Host
+        exit 1
+    }
+    
+    # Verify Python script exists
+    if (-not (Test-Path '.\$PythonScript')) {
+        Write-Host 'ERROR: $PythonScript not found in current directory' -ForegroundColor Red
+        Write-Host "Current directory: `$(Get-Location)" -ForegroundColor Yellow
+        Write-Host ''
+        Write-Host 'Press Enter to close...' -ForegroundColor Yellow
+        Read-Host
+        exit 1
+    }
+    
+    Write-Host 'You will now be prompted for Cisco device credentials.' -ForegroundColor Yellow
+    Write-Host 'These credentials will be encrypted and saved to .cisco_credentials' -ForegroundColor Gray
+    Write-Host ''
+    Write-Host 'Enter the following:' -ForegroundColor White
+    Write-Host '  1. Device Username (for SSH/Telnet authentication)' -ForegroundColor Gray
+    Write-Host '  2. Device Password' -ForegroundColor Gray
+    Write-Host '  3. Enable Password (for privilege 15 access)' -ForegroundColor Gray
+    Write-Host ''
+    
+    # Run the Python script
+    & '.\python.exe' '$PythonScript' --save-credentials
+    
+    `$pythonExitCode = `$LASTEXITCODE
+    
+    Write-Host ''
+    Write-Host "Python script exit code: `$pythonExitCode" -ForegroundColor Gray
+    Write-Host ''
+    
+    # Check if credential file was created
+    if (Test-Path '.cisco_credentials') {
+        `$fileSize = (Get-Item '.cisco_credentials').Length
+        if (`$fileSize -gt 0) {
+            Write-Host 'SUCCESS: Credential file created' -ForegroundColor Green
+            Write-Host "Location: $InstallPath\.cisco_credentials" -ForegroundColor Gray
+            Write-Host "Size: `$fileSize bytes" -ForegroundColor Gray
+        }
+        else {
+            Write-Host 'WARNING: Credential file is empty' -ForegroundColor Yellow
+            Write-Host "Location: $InstallPath\.cisco_credentials" -ForegroundColor Gray
+        }
     }
     else {
-        Write-Host 'WARNING: Credential file is empty' -ForegroundColor Yellow
+        Write-Host 'WARNING: Credential file was not created' -ForegroundColor Yellow
+        Write-Host "Expected location: $InstallPath\.cisco_credentials" -ForegroundColor Gray
+        
+        if (`$pythonExitCode -ne 0) {
+            Write-Host "Python script exited with error code: `$pythonExitCode" -ForegroundColor Red
+        }
     }
 }
-else {
-    Write-Host 'WARNING: Credential file was not created' -ForegroundColor Yellow
+catch {
+    Write-Host ''
+    Write-Host 'ERROR: An exception occurred' -ForegroundColor Red
+    Write-Host "Error: `$_" -ForegroundColor Red
+    Write-Host "Location: `$(Get-Location)" -ForegroundColor Yellow
 }
 
 Write-Host ''
@@ -526,7 +571,7 @@ Write-Host 'Press Enter to close this window and return to installation...' -For
 Read-Host
 "@
         
-        $tempScriptPath = Join-Path $env:TEMP "cisco-cred-setup-$(Get-Random).ps1"
+        $tempScriptPath = Join-Path $env:SystemDrive\Temp "cisco-cred-setup-$(Get-Random).ps1"
         
         try {
             Set-Content -Path $tempScriptPath -Value $credSetupScript -Force
