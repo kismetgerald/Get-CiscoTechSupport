@@ -14,13 +14,13 @@
 #     Kismet Agbasi (Github: kismetgerald Email: KismetG17@gmail.com)
 #     
 # VERSION:
-#     0.0.3
+#     0.0.4
 #
 # CREATED:
 #     December 4, 2025
 #
 # LAST UPDATED:
-#     December 12, 2025
+#     December 14, 2025
 #
 # DEPENDENCIES:
 #     - Python 3.6+
@@ -185,6 +185,18 @@ DEFAULT_DEVICES_FILE = None
 # ============================================================================
 # END CONFIGURATION SECTION
 # ============================================================================
+
+import os
+import sys
+
+# Make script self-contained with Python3 subfolder
+script_dir = os.path.dirname(os.path.abspath(__file__))
+python_root = os.path.join(script_dir, 'Python3')
+python_lib = os.path.join(python_root, 'Lib', 'site-packages')
+python_scripts = os.path.join(python_root, 'Scripts')
+
+if os.path.exists(python_lib):
+    sys.path.insert(0, python_lib)
 
 import argparse
 import logging
