@@ -4,4 +4,5 @@
 Install-GetCiscoTechSupport_ChatGPT.ps1
 Get-CiscoTechSupport.zip
 .vscode/
+Logs/
 Results/
