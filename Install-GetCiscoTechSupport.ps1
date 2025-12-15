@@ -134,6 +134,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $script:LogFile = $LogPath
 $script:TaskName = "Cisco Tech-Support Collector"
+$script:PythonSubfolder = "Python3"
 $script:RequiredPackages = @('netmiko', 'pysnmp', 'cryptography')
 $script:PythonScriptName = 'get-ciscotechsupport.py'
 #endregion
@@ -706,9 +707,9 @@ function Test-EmbeddedPython {
     
     Write-InstallLog -Message "Validating embedded Python distribution..." -Level INFO
     
-    $pythonExe = Join-Path $InstallPath "python.exe"
-    $libDir = Join-Path $InstallPath "Lib"
-    $sitePackages = Join-Path $InstallPath "Lib\site-packages"
+    $pythonExe = Join-Path $InstallPath $script:PythonSubfolder "python.exe"
+    $libDir = Join-Path $InstallPath $script:PythonSubfolder "Lib"
+    $sitePackages = Join-Path $InstallPath $script:PythonSubfolder "Lib\site-packages"
     
     if (-not (Test-Path $pythonExe)) {
         Write-InstallLog -Message "Missing python.exe at root level" -Level ERROR
@@ -1137,13 +1138,12 @@ function Install-CiscoCollector {
         Expand-ArchiveCompat -Path $resolvedArchive -DestinationPath $InstallPath
         
         Write-LogSection "VALIDATION"
-        $pythonExe = Join-Path $InstallPath "python.exe"
+        $pythonExe = Join-Path $InstallPath $script:PythonSubfolder "python.exe"
         $scriptPath = Join-Path $InstallPath $script:PythonScriptName
-        
+
         if (-not (Test-Path $pythonExe)) {
-            Write-InstallLog -Message "Python executable not found at root level: $pythonExe" -Level ERROR
-            Write-InstallLog -Message "Archive must contain embedded Python at root level" -Level ERROR
-            throw "Invalid archive structure - python.exe not found at root"
+            Write-InstallLog -Message "Python executable not found in $($script:PythonSubfolder) subfolder: $pythonExe" -Level ERROR
+            Write-InstallLog -Message "Archive must contain embedded Python in $($script:PythonSubfolder)\ subfolder" -Level ERROR
         }
         
         if (-not (Test-Path $scriptPath)) {
