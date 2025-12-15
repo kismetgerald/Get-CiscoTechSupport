@@ -501,7 +501,7 @@ try {
     Write-Host ''
     
     # Verify python.exe exists
-    if (-not (Test-Path '.\python.exe')) {
+    if (-not (Test-Path '$($script:PythonSubfolder)\python.exe')) {
         Write-Host 'ERROR: python.exe not found in current directory' -ForegroundColor Red
         Write-Host "Current directory: `$(Get-Location)" -ForegroundColor Yellow
         Write-Host ''
