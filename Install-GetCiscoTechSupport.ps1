@@ -530,7 +530,7 @@ try {
     Write-Host ''
     
     # Run the Python script
-    & '.\python.exe' '$PythonScript' --save-credentials
+    & '$($script:PythonSubfolder)\python.exe' '$PythonScript' --save-credentials
     
     `$pythonExitCode = `$LASTEXITCODE
     
@@ -1484,7 +1484,7 @@ function Install-CiscoCollector {
             Write-Host ""
             Write-Host "   Then in the new PowerShell window:" -ForegroundColor Gray
             Write-Host "   cd `"$InstallPath`"" -ForegroundColor DarkGray
-            Write-Host "   .\python.exe $script:PythonScriptName --save-credentials" -ForegroundColor DarkGray
+            Write-Host "   $($script:PythonSubfolder)\python.exe $script:PythonScriptName --save-credentials" -ForegroundColor DarkGray
             Write-Host ""
             Write-Host "   # Restore STIG compliance after credential setup" -ForegroundColor DarkGray
             Write-Host "   Set-Service -Name seclogon -StartupType Disabled" -ForegroundColor DarkGray
@@ -1499,7 +1499,7 @@ function Install-CiscoCollector {
             Write-Host ""
             Write-Host "   Then in the new PowerShell window:" -ForegroundColor Gray
             Write-Host "   cd `"$InstallPath`"" -ForegroundColor DarkGray
-            Write-Host "   .\python.exe $script:PythonScriptName --save-credentials" -ForegroundColor DarkGray
+            Write-Host "   $($script:PythonSubfolder)\python.exe $script:PythonScriptName --save-credentials" -ForegroundColor DarkGray
             Write-Host ""
             Write-Host "   # Restore STIG compliance after credential setup" -ForegroundColor DarkGray
             Write-Host "   Set-Service -Name seclogon -StartupType Disabled" -ForegroundColor DarkGray
@@ -1530,20 +1530,20 @@ function Install-CiscoCollector {
             
             # Provide appropriate test command based on discovery method
             if ($taskArguments -like "*--method cdp*") {
-                Write-Host "   .\python.exe $script:PythonScriptName --discover --method cdp" -ForegroundColor DarkGray
+                Write-Host "   $($script:PythonSubfolder)\python.exe $script:PythonScriptName --discover --method cdp" -ForegroundColor DarkGray
             }
             elseif ($taskArguments -like "*--method snmp*") {
-                Write-Host "   .\python.exe $script:PythonScriptName --discover --method snmp --subnet <your_subnet>" -ForegroundColor DarkGray
+                Write-Host "   $($script:PythonSubfolder)\python.exe $script:PythonScriptName --discover --method snmp --subnet <your_subnet>" -ForegroundColor DarkGray
             }
             elseif ($taskArguments -like "*--method arp*") {
-                Write-Host "   .\python.exe $script:PythonScriptName --discover --method arp" -ForegroundColor DarkGray
+                Write-Host "   $($script:PythonSubfolder)\python.exe $script:PythonScriptName --discover --method arp" -ForegroundColor DarkGray
             }
             elseif ($taskArguments -like "*--method hybrid*") {
-                Write-Host "   .\python.exe $script:PythonScriptName --discover --method hybrid" -ForegroundColor DarkGray
+                Write-Host "   $($script:PythonSubfolder)\python.exe $script:PythonScriptName --discover --method hybrid" -ForegroundColor DarkGray
             }
             else {
                 # Fallback to generic discover command
-                Write-Host "   .\python.exe $script:PythonScriptName --discover" -ForegroundColor DarkGray
+                Write-Host "   $($script:PythonSubfolder)\python.exe $script:PythonScriptName --discover" -ForegroundColor DarkGray
             }
         }
         elseif (Test-Path $devicesFilePath) {
@@ -1555,7 +1555,7 @@ function Install-CiscoCollector {
             Write-Host "$stepNumber. Test the collection manually (as the service account):" -ForegroundColor White
             Write-Host "   Using the same runas/PsExec method:" -ForegroundColor Gray
             Write-Host "   cd `"$InstallPath`"" -ForegroundColor DarkGray
-            Write-Host "   .\python.exe $script:PythonScriptName -f devices.txt" -ForegroundColor DarkGray
+            Write-Host "   $($script:PythonSubfolder)\python.exe $script:PythonScriptName -f devices.txt" -ForegroundColor DarkGray
         }
         else {
             Write-Host "$stepNumber. Verify your device list file contains the correct devices" -ForegroundColor White
@@ -1564,7 +1564,7 @@ function Install-CiscoCollector {
             Write-Host "$stepNumber. Test the collection manually (as the service account):" -ForegroundColor White
             Write-Host "   Using the same runas/PsExec method:" -ForegroundColor Gray
             Write-Host "   cd `"$InstallPath`"" -ForegroundColor DarkGray
-            Write-Host "   .\python.exe $script:PythonScriptName -f <your_device_file>" -ForegroundColor DarkGray
+            Write-Host "   $($script:PythonSubfolder)\python.exe $script:PythonScriptName -f <your_device_file>" -ForegroundColor DarkGray
         }
         Write-Host ""
         $stepNumber++
