@@ -78,8 +78,8 @@
 
 .NOTES
     Author: Kismet Agbasi (Github: kismetgerald Email: KismetG17@gmail.com)
-    Version: 0.0.3
-    Date: December 12, 2025
+    Version: 0.0.4
+    Date: December 14, 2025
     Requires: PowerShell 5.1+ with Administrator privileges
     
     IMPORTANT: This script is designed for embedded Python distributions.
