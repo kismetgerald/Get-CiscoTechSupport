@@ -707,9 +707,9 @@ function Test-EmbeddedPython {
     
     Write-InstallLog -Message "Validating embedded Python distribution..." -Level INFO
     
-    $pythonExe = Join-Path $InstallPath $script:PythonSubfolder "python.exe"
-    $libDir = Join-Path $InstallPath $script:PythonSubfolder "Lib"
-    $sitePackages = Join-Path $InstallPath $script:PythonSubfolder "Lib\site-packages"
+    $pythonExe = "$InstallPath\$($script:PythonSubfolder)\python.exe"
+    $libDir = "$InstallPath\$($script:PythonSubfolder)\Lib"
+    $sitePackages = "$InstallPath\$($script:PythonSubfolder)\Lib\site-packages"
     
     if (-not (Test-Path $pythonExe)) {
         Write-InstallLog -Message "Missing python.exe at root level" -Level ERROR
@@ -814,7 +814,7 @@ function New-CiscoCollectorTask {
     
     Write-InstallLog -Message "Creating scheduled task: $script:TaskName" -Level INFO
     
-    $pythonExe = Join-Path $InstallPath "python.exe"
+    $pythonExe = "$InstallPath\$($script:PythonSubfolder)\python.exe"
     $scriptPath = Join-Path $InstallPath $script:PythonScriptName
     
     $fullArguments = "`"$scriptPath`" --non-interactive $TaskArguments"
@@ -1001,7 +1001,7 @@ function Uninstall-CiscoCollector {
         
         Write-InstallLog -Message "Removing installation directory..." -Level INFO
         try {
-            $pythonExe = Join-Path $InstallPath "python.exe"
+            $pythonExe = "$InstallPath\$($script:PythonSubfolder)\python.exe"
             if (Test-Path $pythonExe) {
                 $runningProcesses = Get-Process | Where-Object { $_.Path -like "$InstallPath*" }
                 if ($runningProcesses) {
@@ -1138,7 +1138,7 @@ function Install-CiscoCollector {
         Expand-ArchiveCompat -Path $resolvedArchive -DestinationPath $InstallPath
         
         Write-LogSection "VALIDATION"
-        $pythonExe = Join-Path $InstallPath $script:PythonSubfolder "python.exe"
+        $pythonExe = "$InstallPath\$($script:PythonSubfolder)\python.exe"
         $scriptPath = Join-Path $InstallPath $script:PythonScriptName
 
         if (-not (Test-Path $pythonExe)) {
