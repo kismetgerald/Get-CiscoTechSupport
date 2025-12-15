@@ -575,6 +575,12 @@ Read-Host
         # because the service account running under Start-Process -Credential cannot access 
         # the interactive user's AppData\Local\Temp directory
         $tempScriptPath = Join-Path $env:SystemDrive\Temp "cisco-cred-setup-$(Get-Random).ps1"
+
+        # Ensure SystemDrive\Temp exists
+        $systemTempDir = Join-Path $env:SystemDrive "Temp"
+        if (-not (Test-Path $systemTempDir)) {
+            New-Item -Path $systemTempDir -ItemType Directory -Force | Out-Null
+        }
         
         try {
             Set-Content -Path $tempScriptPath -Value $credSetupScript -Force
