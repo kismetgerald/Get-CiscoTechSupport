@@ -1495,7 +1495,7 @@ function Install-CiscoCollector {
             Write-Host "   Set-Service -Name seclogon -StartupType Manual" -ForegroundColor DarkGray
             Write-Host ""
             Write-Host "   cd `"$InstallPath\Utils\PsTools`"" -ForegroundColor DarkGray
-            Write-Host "   .\PsExec.exe -u $($serviceAccountCred.UserName) -p * -i powershell.exe" -ForegroundColor DarkGray
+            Write-Host "   .\PsExec.exe -accepteula -u $($serviceAccountCred.UserName) -p * -i powershell.exe" -ForegroundColor DarkGray
             Write-Host ""
             Write-Host "   Then in the new PowerShell window:" -ForegroundColor Gray
             Write-Host "   cd `"$InstallPath`"" -ForegroundColor DarkGray
