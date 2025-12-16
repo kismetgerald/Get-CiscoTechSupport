@@ -1182,9 +1182,9 @@ function Install-CiscoCollector {
                 Write-Host "`nDiscovery Method" -ForegroundColor Cyan
                 Write-Host "=========================================" -ForegroundColor Cyan
                 Write-Host "  1. CDP Discovery - Query default gateway for network topology (Recommended)" -ForegroundColor White
-                Write-Host "  2. SNMP Subnet Scan - Scan specific subnet via SNMP" -ForegroundColor White
-                Write-Host "  3. ARP Discovery - Parse local ARP table" -ForegroundColor White
-                Write-Host "  4. Hybrid - CDP + SNMP (most thorough)" -ForegroundColor White
+                Write-Host "  2. Hybrid - CDP + SNMP (most thorough)" -ForegroundColor White
+                Write-Host "  3. SNMP Subnet Scan - Scan specific subnet via SNMP" -ForegroundColor White
+                Write-Host "  4. ARP Discovery - Parse local ARP table (least reliable, but a last resort)" -ForegroundColor White
                 $discoveryMethod = Read-Host "`nSelection [1]"
                 if ([string]::IsNullOrWhiteSpace($discoveryMethod)) { $discoveryMethod = '1' }
                 
@@ -1208,33 +1208,8 @@ function Install-CiscoCollector {
                             Write-InstallLog -Message "CDP discovery configured with gateway: $gatewayIP" -Level INFO
                         }
                     }
-                    
+
                     '2' {
-                        # SNMP Subnet Scan
-                        Write-Host "`nSNMP Subnet Scan Configuration" -ForegroundColor Cyan
-                        $subnet = Read-Host "Enter subnet for discovery (e.g., 192.168.1.0/24)"
-                        
-                        if ([string]::IsNullOrWhiteSpace($subnet)) {
-                            Write-InstallLog -Message "No subnet provided for SNMP scan" -Level ERROR
-                            throw "Subnet is required for SNMP discovery method"
-                        }
-                        
-                        $taskArguments = "--discover --method snmp --subnet `"$subnet`""
-                        Write-InstallLog -Message "SNMP discovery configured for subnet: $subnet" -Level INFO
-                    }
-                    
-                    '3' {
-                        # ARP Discovery
-                        Write-Host "`nARP Discovery Configuration" -ForegroundColor Cyan
-                        Write-Host "This method parses the local ARP table to find devices." -ForegroundColor Gray
-                        Write-Host "Note: Only discovers devices on the local subnet." -ForegroundColor Yellow
-                        Write-Host ""
-                        
-                        $taskArguments = "--discover --method arp"
-                        Write-InstallLog -Message "ARP discovery configured" -Level INFO
-                    }
-                    
-                    '4' {
                         # Hybrid Discovery
                         Write-Host "`nHybrid Discovery Configuration" -ForegroundColor Cyan
                         Write-Host "This combines CDP and SNMP for the most thorough discovery." -ForegroundColor Gray
@@ -1256,10 +1231,36 @@ function Install-CiscoCollector {
                         
                         Write-InstallLog -Message "Hybrid discovery configured (CDP + SNMP)" -Level INFO
                     }
+                    
+                    '3' {
+                        # SNMP Subnet Scan
+                        Write-Host "`nSNMP Subnet Scan Configuration" -ForegroundColor Cyan
+                        $subnet = Read-Host "Enter subnet for discovery (e.g., 192.168.1.0/24)"
+                        
+                        if ([string]::IsNullOrWhiteSpace($subnet)) {
+                            Write-InstallLog -Message "No subnet provided for SNMP scan" -Level ERROR
+                            throw "Subnet is required for SNMP discovery method"
+                        }
+                        
+                        $taskArguments = "--discover --method snmp --subnet `"$subnet`""
+                        Write-InstallLog -Message "SNMP discovery configured for subnet: $subnet" -Level INFO
+                    }
+                    
+                    '4' {
+                        # ARP Discovery
+                        Write-Host "`nARP Discovery Configuration" -ForegroundColor Cyan
+                        Write-Host "This method parses the local ARP table to find devices." -ForegroundColor Gray
+                        Write-Host "Note: Only discovers devices on the local subnet." -ForegroundColor Yellow
+                        Write-Host ""
+                        
+                        $taskArguments = "--discover --method arp"
+                        Write-InstallLog -Message "ARP discovery configured" -Level INFO
+                    }
+                    
                 }
                 
                 # SNMP Configuration (only for methods that use SNMP)
-                if ($discoveryMethod -in @('2', '4')) {
+                if ($discoveryMethod -in @('2', '3')) {
                     Write-Host "`nSNMP Configuration" -ForegroundColor Cyan
                     Write-Host "  1. SNMP v2c (community string)" -ForegroundColor White
                     Write-Host "  2. SNMP v3 (username/auth)" -ForegroundColor White
