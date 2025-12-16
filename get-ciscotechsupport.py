@@ -20,7 +20,7 @@
 #     December 4, 2025
 #
 # LAST UPDATED:
-#     December 14, 2025
+#     December 16, 2025
 #
 # DEPENDENCIES:
 #     - Python 3.6+
@@ -1461,6 +1461,21 @@ Examples:
     successful = sum(1 for r in results if r['status'] == 'success')
     failed = sum(1 for r in results if r['status'] == 'failed')
     
+    # Log summary to file
+    collector.logger.info("="*60)
+    collector.logger.info("COLLECTION SUMMARY")
+    collector.logger.info("="*60)
+    collector.logger.info(f"Total devices: {len(devices)}")
+    collector.logger.info(f"Successful: {successful}")
+    collector.logger.info(f"Failed: {failed}")
+    collector.logger.info(f"Output directory: {collector.output_dir}")
+    collector.logger.info(f"Main log: {collector.log_file}")
+    collector.logger.info(f"Offline hosts log: {collector.offline_log}")
+    collector.logger.info("="*60)
+    collector.logger.info("Cisco Tech-Support Collector COMPLETED SUCCESSFULLY")
+    collector.logger.info("="*60)
+
+   # Print summary to console
     print("\n" + "="*60)
     print("COLLECTION SUMMARY")
     print("="*60)
