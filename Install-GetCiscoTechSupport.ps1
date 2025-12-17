@@ -412,15 +412,45 @@ function Expand-ArchiveCompat {
     Write-InstallLog -Message "Extracting archive: $Path" -Level INFO
     Write-InstallLog -Message "Destination: $DestinationPath" -Level INFO
     
+    # Try .NET ZipFile first (fastest method)
+    try {
+        Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
+        Write-InstallLog -Message "Using .NET ZipFile for extraction (fast method)" -Level INFO
+        
+        # Check PowerShell version to determine extraction method
+        $psVersion = $PSVersionTable.PSVersion.Major
+        
+        if ($psVersion -ge 7) {
+            # PowerShell 7+ supports overwrite parameter directly
+            [System.IO.Compression.ZipFile]::ExtractToDirectory($Path, $DestinationPath, $true)
+            Write-InstallLog -Message "Archive extracted successfully (PS7+ with overwrite)" -Level SUCCESS
+        }
+        else {
+            # PowerShell 5.1: Check if destination exists and handle manually
+            if (Test-Path $DestinationPath) {
+                Write-InstallLog -Message "Destination exists, removing before extraction" -Level INFO
+                Remove-Item -Path $DestinationPath -Recurse -Force -ErrorAction Stop
+            }
+            
+            [System.IO.Compression.ZipFile]::ExtractToDirectory($Path, $DestinationPath)
+            Write-InstallLog -Message "Archive extracted successfully (.NET ZipFile)" -Level SUCCESS
+        }
+        return
+    }
+    catch {
+        Write-InstallLog -Message ".NET ZipFile extraction failed: $_" -Level WARNING
+        Write-InstallLog -Message "Falling back to Expand-Archive cmdlet" -Level INFO
+    }
+    
+    # Fallback to Expand-Archive (slower but more compatible)
     try {
         if (Get-Command Expand-Archive -ErrorAction SilentlyContinue) {
             Expand-Archive -Path $Path -DestinationPath $DestinationPath -Force
-            Write-InstallLog -Message "Archive extracted successfully" -Level SUCCESS
+            Write-InstallLog -Message "Archive extracted successfully (Expand-Archive fallback)" -Level SUCCESS
         }
         else {
-            Add-Type -AssemblyName System.IO.Compression.FileSystem
-            [System.IO.Compression.ZipFile]::ExtractToDirectory($Path, $DestinationPath)
-            Write-InstallLog -Message "Archive extracted successfully" -Level SUCCESS
+            Write-InstallLog -Message "Neither .NET ZipFile nor Expand-Archive are available" -Level ERROR
+            throw "No compatible archive extraction method available"
         }
     }
     catch {
