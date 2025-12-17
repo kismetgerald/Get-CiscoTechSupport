@@ -420,9 +420,12 @@ function Expand-ArchiveCompat {
         # Check PowerShell version to determine extraction method
         $psVersion = $PSVersionTable.PSVersion.Major
         
+        Write-Host "Extracting archive (this may take a moment)..." -ForegroundColor Cyan -NoNewline
+        
         if ($psVersion -ge 7) {
             # PowerShell 7+ supports overwrite parameter directly
             [System.IO.Compression.ZipFile]::ExtractToDirectory($Path, $DestinationPath, $true)
+            Write-Host " Done!" -ForegroundColor Green
             Write-InstallLog -Message "Archive extracted successfully (PS7+ with overwrite)" -Level SUCCESS
         }
         else {
@@ -433,11 +436,13 @@ function Expand-ArchiveCompat {
             }
             
             [System.IO.Compression.ZipFile]::ExtractToDirectory($Path, $DestinationPath)
+            Write-Host " Done!" -ForegroundColor Green
             Write-InstallLog -Message "Archive extracted successfully (.NET ZipFile)" -Level SUCCESS
         }
         return
     }
     catch {
+        Write-Host " Failed!" -ForegroundColor Red
         Write-InstallLog -Message ".NET ZipFile extraction failed: $_" -Level WARNING
         Write-InstallLog -Message "Falling back to Expand-Archive cmdlet" -Level INFO
     }
