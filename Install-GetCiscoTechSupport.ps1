@@ -1806,15 +1806,6 @@ function Install-CiscoCollector {
             $stepNumber++
         }
         
-        # Step 2 (or 1): Verify credentials (only if automated setup succeeded)
-        if ($credSetupSuccess) {
-            Write-Host "$stepNumber. Verify credentials file:" -ForegroundColor White
-            Write-Host "   Test-Path `"$credFilePath`"" -ForegroundColor Gray
-            Write-Host "   (Should return: True)" -ForegroundColor DarkGray
-            Write-Host ""
-            $stepNumber++
-        }
-        
         # Next step: Device list or test
         if ($isDiscoveryMode) {
             Write-Host "$stepNumber. Test the collection manually (as the service account):" -ForegroundColor White
