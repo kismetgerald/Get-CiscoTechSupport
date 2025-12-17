@@ -1470,6 +1470,96 @@ function Get-ExistingCollectorTasks {
     }
 }
 
+function Start-InitialTaskRun {
+    <#
+    .SYNOPSIS
+        Prompts user to run the scheduled task immediately
+    
+    .PARAMETER TaskName
+        The name of the scheduled task to run
+    
+    .PARAMETER ServiceAccountName
+        The service account username for context
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$TaskName,
+        
+        [Parameter(Mandatory = $true)]
+        [string]$ServiceAccountName
+    )
+    
+    Write-Host ""
+    Write-Host ("=" * 80) -ForegroundColor Cyan
+    Write-Host "INITIAL TASK RUN" -ForegroundColor Cyan
+    Write-Host ("=" * 80) -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "Would you like to run the scheduled task now for an initial test?" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "This will:" -ForegroundColor White
+    Write-Host "  - Execute the task immediately as $ServiceAccountName" -ForegroundColor Gray
+    Write-Host "  - Collect tech-support output from configured devices" -ForegroundColor Gray
+    Write-Host "  - Verify that credentials and configuration are working correctly" -ForegroundColor Gray
+    Write-Host "  - Run in the background (you can check Task Scheduler for status)" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "NOTE: " -ForegroundColor Cyan -NoNewline
+    Write-Host "Device credentials must be configured for this to succeed." -ForegroundColor White
+    Write-Host ""
+    
+    $response = Read-Host "Run task now? (yes/no) [no]"
+    if ([string]::IsNullOrWhiteSpace($response)) { $response = 'no' }
+    
+    if ($response -match '^y(es)?$|^Y(ES)?$') {
+        Write-Host ""
+        Write-Host "Starting scheduled task..." -ForegroundColor Cyan
+        Write-InstallLog -Message "User requested initial task run" -Level INFO
+        
+        try {
+            # Start the scheduled task
+            Start-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+            
+            Write-Host "Task started successfully!" -ForegroundColor Green
+            Write-InstallLog -Message "Scheduled task started: $TaskName" -Level SUCCESS
+            
+            # Wait a moment and check task state
+            Start-Sleep -Seconds 2
+            $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+            
+            if ($task) {
+                $taskInfo = Get-ScheduledTaskInfo -TaskName $TaskName -ErrorAction SilentlyContinue
+                Write-Host ""
+                Write-Host "Task Status:" -ForegroundColor Cyan
+                Write-Host "  State: $($task.State)" -ForegroundColor Gray
+                
+                if ($taskInfo) {
+                    Write-Host "  Last Run Time: $($taskInfo.LastRunTime)" -ForegroundColor Gray
+                    Write-Host "  Last Result: $($taskInfo.LastTaskResult)" -ForegroundColor Gray
+                }
+                
+                Write-Host ""
+                Write-Host "You can monitor the task in Task Scheduler or check the output directory." -ForegroundColor White
+                Write-InstallLog -Message "Task state: $($task.State)" -Level INFO
+            }
+            
+            return $true
+        }
+        catch {
+            Write-Host "Failed to start task: $_" -ForegroundColor Red
+            Write-InstallLog -Message "Failed to start scheduled task: $_" -Level ERROR
+            Write-Host ""
+            Write-Host "You can manually run the task from Task Scheduler or using:" -ForegroundColor Yellow
+            Write-Host "  Start-ScheduledTask -TaskName '$TaskName'" -ForegroundColor Gray
+            return $false
+        }
+    }
+    else {
+        Write-Host ""
+        Write-Host "Initial task run skipped" -ForegroundColor Yellow
+        Write-InstallLog -Message "User declined initial task run" -Level INFO
+        return $false
+    }
+}
 
 #endregion
 
@@ -1992,6 +2082,11 @@ function Install-CiscoCollector {
         Write-Host "`n" -NoNewline
         Write-Host "Installation successful! " -ForegroundColor Green -NoNewline
         Write-Host "Check log file for details: $script:LogFile" -ForegroundColor White
+        
+        # Offer initial task run if credentials were configured successfully
+        if (-not $SkipTaskCreation -and $ScheduleType -ne 'None' -and $credSetupSuccess) {
+            Start-InitialTaskRun -TaskName $createdTaskName -ServiceAccountName $serviceAccountCred.UserName
+        }
         
         Write-Host "`n" -NoNewline
         Write-Host ("=" * 80) -ForegroundColor Cyan
