@@ -44,7 +44,9 @@
     Directory where tech-support files will be saved
 
 .PARAMETER LogPath
-    Installation log file path (default: C:\Logs\Get-CiscoTechSupport-Install.log)
+    Base path for installation log files. Actual log files will be timestamped.
+    (default: C:\Logs\Get-CiscoTechSupport-Install.log)
+    Example output: Get-CiscoTechSupport-Install-20251216-143052.log
 
 .PARAMETER Force
     Force reinstallation if already installed
@@ -132,7 +134,12 @@ param(
 
 #region Configuration
 $ErrorActionPreference = 'Stop'
-$script:LogFile = $LogPath
+# Generate timestamped log filename
+$logDirectory = Split-Path -Path $LogPath -Parent
+$logBaseName = [System.IO.Path]::GetFileNameWithoutExtension($LogPath)
+$logExtension = [System.IO.Path]::GetExtension($LogPath)
+$timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+$script:LogFile = Join-Path $logDirectory "$logBaseName-$timestamp$logExtension"
 $script:TaskName = "Cisco Tech-Support Collector"
 $script:PythonSubfolder = "Python3"
 $script:RequiredPackages = @('netmiko', 'pysnmp', 'cryptography')
@@ -186,6 +193,172 @@ function Write-LogSection {
     Write-InstallLog -Message $separator -Level INFO
     Write-InstallLog -Message $Title -Level INFO
     Write-InstallLog -Message $separator -Level INFO
+}
+#endregion
+
+#region Log Management Functions
+function Get-InstallationLogs {
+    <#
+    .SYNOPSIS
+        Finds all installation log files
+    
+    .PARAMETER LogPath
+        The base log path (without timestamp)
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$LogPath
+    )
+    
+    try {
+        $logDirectory = Split-Path -Path $LogPath -Parent
+        $logBaseName = [System.IO.Path]::GetFileNameWithoutExtension($LogPath)
+        $logExtension = [System.IO.Path]::GetExtension($LogPath)
+        
+        if (-not (Test-Path $logDirectory)) {
+            return @()
+        }
+        
+        # Pattern: Get-CiscoTechSupport-Install-*.log
+        $pattern = "$logBaseName-*$logExtension"
+        $logFiles = Get-ChildItem -Path $logDirectory -Filter $pattern -File -ErrorAction SilentlyContinue
+        
+        return $logFiles | Sort-Object LastWriteTime -Descending
+    }
+    catch {
+        Write-InstallLog -Message "Error finding log files: $_" -Level WARNING
+        return @()
+    }
+}
+
+function Show-LogManagementMenu {
+    <#
+    .SYNOPSIS
+        Displays log management menu during uninstallation
+    
+    .PARAMETER LogPath
+        The base log path (without timestamp)
+    
+    .RETURNS
+        'preserve' or 'purge'
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$LogPath
+    )
+    
+    $logFiles = Get-InstallationLogs -LogPath $LogPath
+    
+    if ($logFiles.Count -eq 0) {
+        Write-Host "No installation log files found to manage" -ForegroundColor Gray
+        return 'preserve'
+    }
+    
+    Write-Host ""
+    Write-Host ("=" * 80) -ForegroundColor Cyan
+    Write-Host "LOG FILE MANAGEMENT" -ForegroundColor Cyan
+    Write-Host ("=" * 80) -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "Found $($logFiles.Count) installation log file(s):" -ForegroundColor White
+    Write-Host ""
+    
+    $totalSize = 0
+    foreach ($log in $logFiles) {
+        $sizeKB = [math]::Round($log.Length / 1KB, 2)
+        $totalSize += $log.Length
+        Write-Host "  $($log.Name)" -ForegroundColor Gray
+        Write-Host "    Last Modified: $($log.LastWriteTime)" -ForegroundColor DarkGray
+        Write-Host "    Size: $sizeKB KB" -ForegroundColor DarkGray
+    }
+    
+    $totalSizeKB = [math]::Round($totalSize / 1KB, 2)
+    Write-Host ""
+    Write-Host "Total Size: $totalSizeKB KB" -ForegroundColor White
+    Write-Host ""
+    Write-Host "What would you like to do with these log files?" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  [P] Preserve - Keep all log files (default)" -ForegroundColor Green
+    Write-Host "  [D] Delete - Remove all installation log files" -ForegroundColor Red
+    Write-Host ""
+    
+    $choice = Read-Host "Selection [P]"
+    if ([string]::IsNullOrWhiteSpace($choice)) { $choice = 'P' }
+    
+    if ($choice -eq 'D' -or $choice -eq 'd') {
+        Write-Host ""
+        Write-Host "WARNING: This will permanently delete all installation logs!" -ForegroundColor Red
+        $confirm = Read-Host "Type YES in UPPERCASE to confirm deletion"
+        
+        if ($confirm -cne 'YES') {
+            Write-Host "Log deletion cancelled - logs will be preserved" -ForegroundColor Yellow
+            Write-InstallLog -Message "Log deletion cancelled by user" -Level INFO
+            return 'preserve'
+        }
+        
+        Write-InstallLog -Message "User confirmed deletion of all log files" -Level INFO
+        return 'purge'
+    }
+    else {
+        Write-Host "Log files will be preserved" -ForegroundColor Green
+        Write-InstallLog -Message "Log files will be preserved" -Level INFO
+        return 'preserve'
+    }
+}
+
+function Remove-InstallationLogs {
+    <#
+    .SYNOPSIS
+        Removes all installation log files
+    
+    .PARAMETER LogPath
+        The base log path (without timestamp)
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$LogPath
+    )
+    
+    try {
+        $logFiles = Get-InstallationLogs -LogPath $LogPath
+        
+        if ($logFiles.Count -eq 0) {
+            Write-InstallLog -Message "No log files found to remove" -Level INFO
+            return $true
+        }
+        
+        Write-InstallLog -Message "Removing $($logFiles.Count) log file(s)..." -Level INFO
+        
+        $successCount = 0
+        $failCount = 0
+        
+        foreach ($log in $logFiles) {
+            try {
+                Remove-Item -Path $log.FullName -Force -ErrorAction Stop
+                Write-InstallLog -Message "Deleted: $($log.Name)" -Level SUCCESS
+                $successCount++
+            }
+            catch {
+                Write-InstallLog -Message "Failed to delete: $($log.Name) - $_" -Level ERROR
+                $failCount++
+            }
+        }
+        
+        Write-Host ""
+        Write-Host "Log File Deletion Summary:" -ForegroundColor Cyan
+        Write-Host "  Successfully deleted: $successCount" -ForegroundColor Green
+        if ($failCount -gt 0) {
+            Write-Host "  Failed to delete: $failCount" -ForegroundColor Red
+        }
+        
+        return ($failCount -eq 0)
+    }
+    catch {
+        Write-InstallLog -Message "Error during log file removal: $_" -Level ERROR
+        return $false
+    }
 }
 #endregion
 
@@ -1314,6 +1487,23 @@ function Uninstall-CiscoCollector {
             $componentsFailed += "Installation Directory"
         }
         
+        # Log file management
+        Write-LogSection "LOG FILE MANAGEMENT"
+        $logAction = Show-LogManagementMenu -LogPath $LogPath
+        
+        if ($logAction -eq 'purge') {
+            Write-Host ""
+            Write-Host "Removing installation log files..." -ForegroundColor Cyan
+            $logRemovalSuccess = Remove-InstallationLogs -LogPath $LogPath
+            
+            if ($logRemovalSuccess) {
+                Write-Host "All log files removed successfully" -ForegroundColor Green
+            }
+            else {
+                Write-Host "Some log files could not be removed" -ForegroundColor Yellow
+            }
+        }    
+
         Write-LogSection "UNINSTALLATION SUMMARY"
         
         if ($componentsRemoved.Count -gt 0) {
@@ -1355,10 +1545,8 @@ function Uninstall-CiscoCollector {
         Write-Host ""
         $itemNumber++
 
-        Write-Host "$itemNumber. Log Files:" -ForegroundColor White
-        Write-Host "   Location: $script:LogFile" -ForegroundColor Gray
-        Write-Host ""
-        $itemNumber++
+        # Log file management is now handled earlier in the uninstall process
+        # No need to mention in manual cleanup section
 
         Write-Host "$itemNumber. Service Account:" -ForegroundColor White
         Write-Host "   If a dedicated service account was created, it can be disabled/removed" -ForegroundColor Gray
