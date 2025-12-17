@@ -265,10 +265,16 @@ function Show-LogManagementMenu {
     Write-Host ""
     
     $totalSize = 0
+    $currentLogFile = $script:LogFile
+    
     foreach ($log in $logFiles) {
         $sizeKB = [math]::Round($log.Length / 1KB, 2)
         $totalSize += $log.Length
-        Write-Host "  $($log.Name)" -ForegroundColor Gray
+        
+        $isActive = ($log.FullName -eq $currentLogFile)
+        $marker = if ($isActive) { " [ACTIVE - Will be preserved]" } else { "" }
+        
+        Write-Host "  $($log.Name)$marker" -ForegroundColor $(if ($isActive) { 'Cyan' } else { 'Gray' })
         Write-Host "    Last Modified: $($log.LastWriteTime)" -ForegroundColor DarkGray
         Write-Host "    Size: $sizeKB KB" -ForegroundColor DarkGray
     }
@@ -334,7 +340,17 @@ function Remove-InstallationLogs {
         $successCount = 0
         $failCount = 0
         
+        $currentLogFile = $script:LogFile
+        
         foreach ($log in $logFiles) {
+            # Skip the currently active log file
+            if ($log.FullName -eq $currentLogFile) {
+                Write-InstallLog -Message "Skipped (active): $($log.Name)" -Level INFO
+                Write-Host "  Skipping active log file: $($log.Name)" -ForegroundColor Yellow
+                $successCount++  # Count as success since we intentionally skipped it
+                continue
+            }
+            
             try {
                 Remove-Item -Path $log.FullName -Force -ErrorAction Stop
                 Write-InstallLog -Message "Deleted: $($log.Name)" -Level SUCCESS
@@ -1267,24 +1283,15 @@ function Remove-CiscoCollectorTask {
             return $true
         }
         
-        # Multiple tasks found - prompt user to select
+        # Single task found - remove without prompting during uninstall
         if ($existingTasks.Count -eq 1) {
             $taskToRemove = $existingTasks[0]
-            Write-Host "`nFound existing scheduled task: " -NoNewline -ForegroundColor Yellow
+            Write-Host "`nFound scheduled task: " -NoNewline -ForegroundColor Cyan
             Write-Host "$($taskToRemove.TaskName)" -ForegroundColor White
             
-            $response = Read-Host "Remove this task? (yes/no) [yes]"
-            if ([string]::IsNullOrWhiteSpace($response)) { $response = 'yes' }
-            
-            if ($response -match '^y(es)?$') {
-                Unregister-ScheduledTask -TaskName $taskToRemove.TaskName -Confirm:$false -ErrorAction Stop
-                Write-InstallLog -Message "Removed scheduled task: $($taskToRemove.TaskName)" -Level SUCCESS
-                return $true
-            }
-            else {
-                Write-InstallLog -Message "Task removal cancelled by user" -Level INFO
-                return $false
-            }
+            Unregister-ScheduledTask -TaskName $taskToRemove.TaskName -Confirm:$false -ErrorAction Stop
+            Write-InstallLog -Message "Removed scheduled task: $($taskToRemove.TaskName)" -Level SUCCESS
+            return $true
         }
         else {
             # Multiple tasks - let user choose
@@ -1349,6 +1356,32 @@ function Remove-CiscoCollectorTask {
     }
 }
 
+function Get-SanitizedTaskName {
+    <#
+    .SYNOPSIS
+        Sanitizes a task name for Windows Task Scheduler compatibility
+    
+    .PARAMETER TaskName
+        The proposed task name
+    
+    .DESCRIPTION
+        Windows Task Scheduler has issues with certain characters, particularly
+        hyphens in specific positions. This function creates a safe task name.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$TaskName
+    )
+    
+    # Replace problematic characters
+    # Hyphens can cause issues, replace with underscore
+    # Keep spaces and alphanumeric characters
+    $sanitized = $TaskName -replace '-', '_' -replace '[^\w\s]', ''
+    
+    return $sanitized.Trim()
+}
+
 function Get-CollectionModeTaskName {
     <#
     .SYNOPSIS
@@ -1364,12 +1397,15 @@ function Get-CollectionModeTaskName {
         [string]$Mode
     )
     
-    $baseTaskName = "Cisco Tech-Support Collector"
+    $baseTaskName = "Cisco TechSupport Collector"
     
-    switch ($Mode) {
-        'DeviceList' { return "$baseTaskName - MODE: Device List" }
-        'Discovery'  { return "$baseTaskName - MODE: Discovery" }
+    $taskName = switch ($Mode) {
+        'DeviceList' { "$baseTaskName MODE DeviceList" }
+        'Discovery'  { "$baseTaskName MODE Discovery" }
     }
+    
+    # Sanitize the task name for Task Scheduler compatibility
+    return Get-SanitizedTaskName -TaskName $taskName
 }
 
 function Get-ExistingCollectorTasks {
@@ -1384,9 +1420,12 @@ function Get-ExistingCollectorTasks {
     param()
     
     try {
-        $baseTaskName = "Cisco Tech-Support Collector"
+        # Match both old and new naming patterns for backward compatibility
         $allTasks = Get-ScheduledTask -ErrorAction SilentlyContinue | 
-                    Where-Object { $_.TaskName -like "$baseTaskName*" }
+                    Where-Object { 
+                        $_.TaskName -like "Cisco Tech-Support Collector*" -or
+                        $_.TaskName -like "Cisco TechSupport Collector*"
+                    }
         
         return $allTasks
     }
