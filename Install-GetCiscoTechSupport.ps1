@@ -778,6 +778,19 @@ Read-Host
             Write-Host "  Size: $($fileInfo.Length) bytes" -ForegroundColor Gray
             Write-Host "  Created: $($fileInfo.CreationTime)" -ForegroundColor Gray
             Write-InstallLog -Message "Credential file verified: $credFile ($($fileInfo.Length) bytes)" -Level SUCCESS
+            
+            # Secure the credential file
+            Write-Host ""
+            Write-Host "Securing credential file..." -ForegroundColor Cyan
+            $secureResult = Set-CredentialFilePermissions -FilePath $credFile -ServiceAccountName $ServiceAccountCred.UserName
+            if ($secureResult) {
+                Write-Host "Credential file secured successfully" -ForegroundColor Green
+            }
+            else {
+                Write-Host "WARNING: Could not fully secure credential file" -ForegroundColor Yellow
+                Write-Host "Manual verification recommended" -ForegroundColor Yellow
+            }
+            
             return $true
         }
         else {
