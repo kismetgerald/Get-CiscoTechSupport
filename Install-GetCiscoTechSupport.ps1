@@ -368,6 +368,101 @@ function Set-SecondaryLogonService {
     }
 }
 
+#region Credential File Security Functions
+
+function Set-CredentialFilePermissions {
+    <#
+    .SYNOPSIS
+        Secures the credential file with restricted permissions and hidden attribute
+    
+    .DESCRIPTION
+        Sets the credential file to hidden and configures ACLs so only the service
+        account has Read/Write access. All other users are denied access.
+    
+    .PARAMETER FilePath
+        Path to the credential file
+    
+    .PARAMETER ServiceAccountName
+        Username of the service account (e.g., DOMAIN\svc_account)
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+        
+        [Parameter(Mandatory = $true)]
+        [string]$ServiceAccountName
+    )
+    
+    try {
+        if (-not (Test-Path $FilePath)) {
+            Write-InstallLog -Message "Credential file not found: $FilePath" -Level WARNING
+            return $false
+        }
+        
+        Write-InstallLog -Message "Securing credential file: $FilePath" -Level INFO
+        
+        # Set the hidden attribute
+        $file = Get-Item $FilePath -Force
+        $file.Attributes = $file.Attributes -bor [System.IO.FileAttributes]::Hidden
+        Write-InstallLog -Message "Set hidden attribute on credential file" -Level SUCCESS
+        
+        # Get the current ACL
+        $acl = Get-Acl -Path $FilePath
+        
+        # Disable inheritance and remove inherited permissions
+        $acl.SetAccessRuleProtection($true, $false)
+        
+        # Remove all existing access rules
+        $acl.Access | ForEach-Object { $acl.RemoveAccessRule($_) | Out-Null }
+        
+        # Create access rule for service account (Read, Write)
+        $serviceAccountIdentity = New-Object System.Security.Principal.NTAccount($ServiceAccountName)
+        $fileSystemRights = [System.Security.AccessControl.FileSystemRights]::Read -bor `
+                           [System.Security.AccessControl.FileSystemRights]::Write
+        $accessType = [System.Security.AccessControl.AccessControlType]::Allow
+        $inheritanceFlags = [System.Security.AccessControl.InheritanceFlags]::None
+        $propagationFlags = [System.Security.AccessControl.PropagationFlags]::None
+        
+        $accessRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+            $serviceAccountIdentity,
+            $fileSystemRights,
+            $inheritanceFlags,
+            $propagationFlags,
+            $accessType
+        )
+        
+        $acl.AddAccessRule($accessRule)
+        
+        # Apply the modified ACL
+        Set-Acl -Path $FilePath -AclObject $acl
+        
+        Write-InstallLog -Message "Credential file permissions configured:" -Level SUCCESS
+        Write-InstallLog -Message "  - Service Account ($ServiceAccountName): Read, Write" -Level INFO
+        Write-InstallLog -Message "  - All Others: Denied (no inherited permissions)" -Level INFO
+        Write-InstallLog -Message "  - File Attribute: Hidden" -Level INFO
+        
+        # Verify the permissions
+        $verifyAcl = Get-Acl -Path $FilePath
+        $serviceAccountAccess = $verifyAcl.Access | Where-Object { $_.IdentityReference -eq $ServiceAccountName }
+        
+        if ($serviceAccountAccess) {
+            Write-InstallLog -Message "Verified: Service account has access to credential file" -Level SUCCESS
+            return $true
+        }
+        else {
+            Write-InstallLog -Message "WARNING: Could not verify service account permissions" -Level WARNING
+            return $false
+        }
+    }
+    catch {
+        Write-InstallLog -Message "Failed to secure credential file: $_" -Level ERROR
+        return $false
+    }
+}
+
+#endregion
+
 function Start-ServiceAccountCredentialSetup {
     param(
         [Parameter(Mandatory=$true)]
