@@ -912,15 +912,28 @@ function Test-RequiredPackages {
 
 #region Scheduled Task Functions
 function New-CiscoCollectorTask {
+    <#
+    .SYNOPSIS
+        Creates a scheduled task for Cisco Tech-Support Collector
+    
+    .PARAMETER CollectionMode
+        The collection mode: 'DeviceList' or 'Discovery'
+    #>
     param(
         [string]$InstallPath,
         [string]$ScheduleType,
         [string]$ScheduleTime,
         [PSCredential]$Credential,
-        [string]$TaskArguments
+        [string]$TaskArguments,
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('DeviceList', 'Discovery')]
+        [string]$CollectionMode
     )
     
-    Write-InstallLog -Message "Creating scheduled task: $script:TaskName" -Level INFO
+    # Generate dynamic task name based on collection mode
+    $taskName = Get-CollectionModeTaskName -Mode $CollectionMode
+    
+    Write-InstallLog -Message "Creating scheduled task: $taskName" -Level INFO
     
     $pythonExe = "$InstallPath\$($script:PythonSubfolder)\python.exe"
     $scriptPath = Join-Path $InstallPath $script:PythonScriptName
@@ -952,14 +965,14 @@ function New-CiscoCollectorTask {
     
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RunOnlyIfNetworkAvailable
     
-    $description = "Automated collection of Cisco tech-support output from network devices. Configured to run $ScheduleType at $ScheduleTime. IMPORTANT: This task must NOT be run as SYSTEM - use a dedicated service account."
+    $description = "Automated collection of Cisco tech-support output from network devices. Collection Mode: $CollectionMode. Configured to run $ScheduleType at $ScheduleTime. IMPORTANT: This task must NOT be run as SYSTEM - use a dedicated service account."
     
     try {
         $username = $Credential.UserName
         $password = $Credential.GetNetworkCredential().Password
         
         if ($trigger) {
-            Register-ScheduledTask -TaskName $script:TaskName `
+            Register-ScheduledTask -TaskName $taskName `
                                    -Description $description `
                                    -Action $action `
                                    -Trigger $trigger `
@@ -970,7 +983,7 @@ function New-CiscoCollectorTask {
                                    -Force | Out-Null
         }
         else {
-            Register-ScheduledTask -TaskName $script:TaskName `
+            Register-ScheduledTask -TaskName $taskName `
                                    -Description $description `
                                    -Action $action `
                                    -User $username `
@@ -986,7 +999,7 @@ function New-CiscoCollectorTask {
                 $taskScheduler = New-Object -ComObject Schedule.Service
                 $taskScheduler.Connect()
                 $taskFolder = $taskScheduler.GetFolder("\")
-                $task = $taskFolder.GetTask($script:TaskName)
+                $task = $taskFolder.GetTask($taskName)
                 $taskDefinition = $task.Definition
                 
                 # Clear existing triggers and create new monthly trigger
@@ -998,7 +1011,7 @@ function New-CiscoCollectorTask {
                 $monthlyTrigger.Enabled = $true
                 
                 # Save the modified task
-                $taskFolder.RegisterTaskDefinition($script:TaskName, $taskDefinition, 4, $username, $password, 1) | Out-Null
+                $taskFolder.RegisterTaskDefinition($taskName, $taskDefinition, 4, $username, $password, 1) | Out-Null
                 
                 Write-InstallLog -Message "Monthly trigger configured for 1st day of month" -Level SUCCESS
             }
@@ -1009,16 +1022,20 @@ function New-CiscoCollectorTask {
         }
 
         Write-InstallLog -Message "Scheduled task created successfully" -Level SUCCESS
-        Write-InstallLog -Message "Task: $script:TaskName" -Level INFO
+        Write-InstallLog -Message "Task: $taskName" -Level INFO
+        Write-InstallLog -Message "Collection Mode: $CollectionMode" -Level INFO
         Write-InstallLog -Message "Schedule: $ScheduleType at $ScheduleTime" -Level INFO
         Write-InstallLog -Message "User: $username" -Level INFO
         
-        $task = Get-ScheduledTask -TaskName $script:TaskName
+        $task = Get-ScheduledTask -TaskName $taskName
         $principal = $task.Principal
         if ($principal.UserId -like "*SYSTEM*") {
             Write-InstallLog -Message "WARNING: Task is configured to run as SYSTEM - this is not supported!" -Level ERROR
             Write-InstallLog -Message "The Python script will fail if executed as SYSTEM." -Level ERROR
         }
+        
+        # Return the task name for use in later functions
+        return $taskName
     }
     catch {
         Write-InstallLog -Message "Failed to create scheduled task: $_" -Level ERROR
@@ -1027,20 +1044,186 @@ function New-CiscoCollectorTask {
 }
 
 function Remove-CiscoCollectorTask {
+    <#
+    .SYNOPSIS
+        Removes Cisco Tech-Support Collector scheduled task(s)
+    
+    .PARAMETER TaskName
+        Specific task name to remove. If not provided, prompts user to select.
+    
+    .PARAMETER Force
+        Remove all collector tasks without prompting
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [string]$TaskName,
+        
+        [Parameter(Mandatory = $false)]
+        [switch]$Force
+    )
+    
     try {
-        $existingTask = Get-ScheduledTask -TaskName $script:TaskName -ErrorAction SilentlyContinue
-        if ($existingTask) {
-            Unregister-ScheduledTask -TaskName $script:TaskName -Confirm:$false
-            Write-InstallLog -Message "Removed existing scheduled task" -Level INFO
+        $existingTasks = Get-ExistingCollectorTasks
+        
+        if ($existingTasks.Count -eq 0) {
+            Write-InstallLog -Message "No Cisco Tech-Support Collector tasks found" -Level INFO
+            return $false
+        }
+        
+        # If specific task name provided, remove only that task
+        if ($TaskName) {
+            $taskToRemove = $existingTasks | Where-Object { $_.TaskName -eq $TaskName }
+            if ($taskToRemove) {
+                Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction Stop
+                Write-InstallLog -Message "Removed scheduled task: $TaskName" -Level SUCCESS
+                return $true
+            }
+            else {
+                Write-InstallLog -Message "Task not found: $TaskName" -Level WARNING
+                return $false
+            }
+        }
+        
+        # If Force flag, remove all tasks without prompting
+        if ($Force) {
+            foreach ($task in $existingTasks) {
+                Unregister-ScheduledTask -TaskName $task.TaskName -Confirm:$false -ErrorAction Stop
+                Write-InstallLog -Message "Removed scheduled task: $($task.TaskName)" -Level SUCCESS
+            }
             return $true
         }
-        return $false
+        
+        # Multiple tasks found - prompt user to select
+        if ($existingTasks.Count -eq 1) {
+            $taskToRemove = $existingTasks[0]
+            Write-Host "`nFound existing scheduled task: " -NoNewline -ForegroundColor Yellow
+            Write-Host "$($taskToRemove.TaskName)" -ForegroundColor White
+            
+            $response = Read-Host "Remove this task? (yes/no) [yes]"
+            if ([string]::IsNullOrWhiteSpace($response)) { $response = 'yes' }
+            
+            if ($response -match '^y(es)?$') {
+                Unregister-ScheduledTask -TaskName $taskToRemove.TaskName -Confirm:$false -ErrorAction Stop
+                Write-InstallLog -Message "Removed scheduled task: $($taskToRemove.TaskName)" -Level SUCCESS
+                return $true
+            }
+            else {
+                Write-InstallLog -Message "Task removal cancelled by user" -Level INFO
+                return $false
+            }
+        }
+        else {
+            # Multiple tasks - let user choose
+            Write-Host "`nFound multiple Cisco Tech-Support Collector tasks:" -ForegroundColor Yellow
+            Write-Host ""
+            
+            for ($i = 0; $i -lt $existingTasks.Count; $i++) {
+                $task = $existingTasks[$i]
+                Write-Host "  [$($i + 1)] $($task.TaskName)" -ForegroundColor White
+                Write-Host "      State: $($task.State)" -ForegroundColor Gray
+                
+                $taskInfo = Get-ScheduledTaskInfo -TaskName $task.TaskName -ErrorAction SilentlyContinue
+                if ($taskInfo -and $taskInfo.LastRunTime) {
+                    Write-Host "      Last Run: $($taskInfo.LastRunTime)" -ForegroundColor Gray
+                }
+            }
+            
+            Write-Host "  [A] Remove ALL tasks" -ForegroundColor Cyan
+            Write-Host "  [N] Don't remove any tasks" -ForegroundColor Cyan
+            Write-Host ""
+            
+            $selection = Read-Host "Select task(s) to remove [N]"
+            if ([string]::IsNullOrWhiteSpace($selection)) { $selection = 'N' }
+            
+            if ($selection -eq 'A' -or $selection -eq 'a') {
+                # Remove all tasks
+                foreach ($task in $existingTasks) {
+                    Unregister-ScheduledTask -TaskName $task.TaskName -Confirm:$false -ErrorAction Stop
+                    Write-InstallLog -Message "Removed scheduled task: $($task.TaskName)" -Level SUCCESS
+                }
+                return $true
+            }
+            elseif ($selection -eq 'N' -or $selection -eq 'n') {
+                Write-InstallLog -Message "Task removal cancelled by user" -Level INFO
+                return $false
+            }
+            elseif ([int]::TryParse($selection, [ref]$null)) {
+                # Remove specific task by number
+                $index = [int]$selection - 1
+                if ($index -ge 0 -and $index -lt $existingTasks.Count) {
+                    $taskToRemove = $existingTasks[$index]
+                    Unregister-ScheduledTask -TaskName $taskToRemove.TaskName -Confirm:$false -ErrorAction Stop
+                    Write-InstallLog -Message "Removed scheduled task: $($taskToRemove.TaskName)" -Level SUCCESS
+                    return $true
+                }
+                else {
+                    Write-Host "Invalid selection" -ForegroundColor Red
+                    Write-InstallLog -Message "Invalid task selection: $selection" -Level WARNING
+                    return $false
+                }
+            }
+            else {
+                Write-Host "Invalid selection" -ForegroundColor Red
+                Write-InstallLog -Message "Invalid task selection: $selection" -Level WARNING
+                return $false
+            }
+        }
     }
     catch {
-        Write-InstallLog -Message "Warning: Could not remove existing task: $_" -Level WARNING
+        Write-InstallLog -Message "Failed to remove scheduled task: $_" -Level ERROR
         return $false
     }
 }
+
+function Get-CollectionModeTaskName {
+    <#
+    .SYNOPSIS
+        Generates a task name with the collection mode appended
+    
+    .PARAMETER Mode
+        The collection mode: 'DeviceList' or 'Discovery'
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('DeviceList', 'Discovery')]
+        [string]$Mode
+    )
+    
+    $baseTaskName = "Cisco Tech-Support Collector"
+    
+    switch ($Mode) {
+        'DeviceList' { return "$baseTaskName - MODE: Device List" }
+        'Discovery'  { return "$baseTaskName - MODE: Discovery" }
+    }
+}
+
+function Get-ExistingCollectorTasks {
+    <#
+    .SYNOPSIS
+        Finds all Cisco Tech-Support Collector scheduled tasks
+    
+    .DESCRIPTION
+        Searches for all scheduled tasks that match the collector naming pattern
+    #>
+    [CmdletBinding()]
+    param()
+    
+    try {
+        $baseTaskName = "Cisco Tech-Support Collector"
+        $allTasks = Get-ScheduledTask -ErrorAction SilentlyContinue | 
+                    Where-Object { $_.TaskName -like "$baseTaskName*" }
+        
+        return $allTasks
+    }
+    catch {
+        Write-InstallLog -Message "Error searching for existing tasks: $_" -Level ERROR
+        return @()
+    }
+}
+
+
 #endregion
 
 #region Uninstallation Functions
@@ -1283,10 +1466,10 @@ function Install-CiscoCollector {
             if ([string]::IsNullOrWhiteSpace($modeChoice)) { $modeChoice = '1' }
             
             $taskArguments = ""
-            $isDiscoveryMode = $false
+            $collectionMode = 'DeviceList'  # Default to DeviceList mode
             
             if ($modeChoice -eq '2') {
-                $isDiscoveryMode = $true
+                $collectionMode = 'Discovery'  # Set to Discovery mode
                 Write-Host "`nDiscovery Method" -ForegroundColor Cyan
                 Write-Host "=========================================" -ForegroundColor Cyan
                 Write-Host "  1. CDP Discovery - Query default gateway for network topology (Recommended)" -ForegroundColor White
@@ -1496,11 +1679,12 @@ function Install-CiscoCollector {
             
             $taskArguments += " -o `"$OutputDirectory`""
             
-            New-CiscoCollectorTask -InstallPath $InstallPath `
-                                   -ScheduleType $ScheduleType `
-                                   -ScheduleTime $ScheduleTime `
-                                   -Credential $serviceAccountCred `
-                                   -TaskArguments $taskArguments
+            $createdTaskName = New-CiscoCollectorTask -InstallPath $InstallPath `
+                                                       -ScheduleType $ScheduleType `
+                                                       -ScheduleTime $ScheduleTime `
+                                                       -Credential $serviceAccountCred `
+                                                       -TaskArguments $taskArguments `
+                                                       -CollectionMode $collectionMode
         }
         else {
             Write-InstallLog -Message "Scheduled task creation skipped" -Level INFO
@@ -1531,7 +1715,7 @@ function Install-CiscoCollector {
         Write-InstallLog -Message "Log File: $script:LogFile" -Level SUCCESS
         
         if (-not $SkipTaskCreation -and $ScheduleType -ne 'None') {
-            Write-InstallLog -Message "Scheduled Task: $script:TaskName" -Level SUCCESS
+            Write-InstallLog -Message "Scheduled Task: $createdTaskName" -Level SUCCESS
             Write-InstallLog -Message "Schedule: $ScheduleType at $ScheduleTime" -Level SUCCESS
             Write-InstallLog -Message "Service Account: $($serviceAccountCred.UserName)" -Level SUCCESS
             
@@ -1681,8 +1865,8 @@ function Install-CiscoCollector {
         # Final step: Verify task
         if (-not $SkipTaskCreation -and $ScheduleType -ne 'None') {
             Write-Host "$stepNumber. Verify scheduled task configuration:" -ForegroundColor White
-            Write-Host "   Get-ScheduledTask -TaskName '$script:TaskName' | Select-Object TaskName,State" -ForegroundColor Gray
-            Write-Host "   Get-ScheduledTask -TaskName '$script:TaskName' | Select-Object -ExpandProperty Principal" -ForegroundColor Gray
+            Write-Host "   Get-ScheduledTask -TaskName '$createdTaskName' | Select-Object TaskName,State" -ForegroundColor Gray
+            Write-Host "   Get-ScheduledTask -TaskName '$createdTaskName' | Select-Object -ExpandProperty Principal" -ForegroundColor Gray
             Write-Host ""
         }
         
