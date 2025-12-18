@@ -1615,7 +1615,8 @@ function Get-ExistingCollectorTasks {
             Write-InstallLog -Message "  - Task: $($task.TaskName), State: $($task.State)" -Level INFO -NoConsole
         }
 
-        return $allTasks
+        # Use comma operator to prevent PowerShell from unwrapping single-item arrays
+        return ,$allTasks
     }
     catch {
         Write-InstallLog -Message "Error searching for existing tasks: $_" -Level ERROR
