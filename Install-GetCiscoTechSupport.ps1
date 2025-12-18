@@ -2602,6 +2602,203 @@ function Install-CiscoCollector {
             }
         }
 
+        # Evaluate-STIG Integration
+        $stigTaskCreated = $false
+        $stigTaskName = $null
+
+        if ($EnableEvaluateSTIG -or (-not $PSBoundParameters.ContainsKey('EnableEvaluateSTIG') -and -not $SkipTaskCreation)) {
+            Write-Host ""
+            Write-LogSection "EVALUATE-STIG INTEGRATION"
+
+            # Interactive prompt if not specified via parameter
+            if (-not $PSBoundParameters.ContainsKey('EnableEvaluateSTIG')) {
+                Write-Host ""
+                Write-Host "Evaluate-STIG can automatically generate STIG checklists from collected tech-support files." -ForegroundColor Cyan
+                Write-Host ""
+                Write-Host "Requirements:" -ForegroundColor White
+                Write-Host "  - PowerShell 7.x must be installed" -ForegroundColor Gray
+                Write-Host "  - Evaluate-STIG.ps1 script must be available" -ForegroundColor Gray
+                Write-Host "  - Monthly scheduled task will be created" -ForegroundColor Gray
+                Write-Host ""
+
+                $response = Read-Host "Enable Evaluate-STIG integration? (yes/no) [no]"
+                if ([string]::IsNullOrWhiteSpace($response)) { $response = 'no' }
+
+                if ($response -notmatch '^y(es)?$|^Y(ES)?$') {
+                    Write-Host "Evaluate-STIG integration skipped" -ForegroundColor Yellow
+                    Write-InstallLog -Message "User declined Evaluate-STIG integration" -Level INFO
+                    $EnableEvaluateSTIG = $false
+                }
+                else {
+                    $EnableEvaluateSTIG = $true
+                }
+            }
+
+            if ($EnableEvaluateSTIG) {
+                # Detect PowerShell 7
+                $pwsh7Check = Get-PowerShell7Path
+
+                if (-not $pwsh7Check.Available) {
+                    Write-Host ""
+                    Write-Host ("=" * 80) -ForegroundColor Red
+                    Write-Host "EVALUATE-STIG INTEGRATION CANNOT PROCEED" -ForegroundColor Red
+                    Write-Host ("=" * 80) -ForegroundColor Red
+                    Write-Host ""
+                    Write-Host "PowerShell 7.x is required for Evaluate-STIG but was not found or validated." -ForegroundColor Yellow
+                    Write-Host ""
+                    Write-Host "TO INSTALL POWERSHELL 7.x IN AN AIR-GAPPED ENVIRONMENT:" -ForegroundColor Cyan
+                    Write-Host ""
+                    Write-Host "1. On an Internet-connected system, download PowerShell 7.x:" -ForegroundColor White
+                    Write-Host "   https://aka.ms/powershell-release?tag=stable" -ForegroundColor Cyan
+                    Write-Host ""
+                    Write-Host "2. Transfer the MSI installer to this air-gapped system" -ForegroundColor White
+                    Write-Host ""
+                    Write-Host "3. Install PowerShell 7.x on this system" -ForegroundColor White
+                    Write-Host ""
+                    Write-Host "4. Run this installation script again with -EnableEvaluateSTIG" -ForegroundColor White
+                    Write-Host ""
+                    Write-Host ("=" * 80) -ForegroundColor Red
+                    Write-Host ""
+                    Write-InstallLog -Message "Evaluate-STIG integration aborted - PowerShell 7.x not available" -Level ERROR
+
+                    $response = Read-Host "Continue installation without Evaluate-STIG integration? (yes/no) [yes]"
+                    if ([string]::IsNullOrWhiteSpace($response)) { $response = 'yes' }
+
+                    if ($response -notmatch '^y(es)?$|^Y(ES)?$') {
+                        Write-InstallLog -Message "Installation cancelled by user - PowerShell 7 not available" -Level WARNING
+                        throw "Installation cancelled - PowerShell 7.x is required for Evaluate-STIG integration"
+                    }
+
+                    $EnableEvaluateSTIG = $false
+                    Write-Host "Continuing installation without Evaluate-STIG integration..." -ForegroundColor Yellow
+                    Write-InstallLog -Message "Installation continuing without Evaluate-STIG integration" -Level WARNING
+                }
+                else {
+                    # PowerShell 7 validated successfully
+                    $script:PowerShell7Path = $pwsh7Check.Path
+                    Write-Host ""
+                    Write-Host "PowerShell 7.x validated successfully" -ForegroundColor Green
+                    Write-Host "  Path: $($script:PowerShell7Path)" -ForegroundColor Gray
+                    Write-Host "  Version: $($pwsh7Check.Version)" -ForegroundColor Gray
+                    Write-Host ""
+
+                    # Get Evaluate-STIG script path
+                    if ([string]::IsNullOrWhiteSpace($EvaluateSTIGPath)) {
+                        Write-Host "Please provide the full path to Evaluate-STIG.ps1 script:" -ForegroundColor Cyan
+                        $EvaluateSTIGPath = Read-Host "Path to Evaluate-STIG.ps1"
+                    }
+
+                    # Validate Evaluate-STIG script exists
+                    if (-not (Test-Path $EvaluateSTIGPath)) {
+                        Write-Host "ERROR: Evaluate-STIG.ps1 not found at: $EvaluateSTIGPath" -ForegroundColor Red
+                        Write-InstallLog -Message "Evaluate-STIG.ps1 not found: $EvaluateSTIGPath" -Level ERROR
+
+                        $response = Read-Host "Continue installation without Evaluate-STIG integration? (yes/no) [yes]"
+                        if ([string]::IsNullOrWhiteSpace($response)) { $response = 'yes' }
+
+                        if ($response -notmatch '^y(es)?$|^Y(ES)?$') {
+                            throw "Installation cancelled - Evaluate-STIG.ps1 not found"
+                        }
+
+                        $EnableEvaluateSTIG = $false
+                    }
+                    else {
+                        Write-Host "Evaluate-STIG.ps1 validated: $EvaluateSTIGPath" -ForegroundColor Green
+                        Write-InstallLog -Message "Evaluate-STIG.ps1 validated: $EvaluateSTIGPath" -Level SUCCESS
+
+                        # Set default directories if not specified
+                        if ([string]::IsNullOrWhiteSpace($EvaluateSTIGInputDirectory)) {
+                            if ($OutputDirectory) {
+                                $EvaluateSTIGInputDirectory = $OutputDirectory
+                            }
+                            else {
+                                $EvaluateSTIGInputDirectory = Join-Path $InstallPath "Results"
+                            }
+                        }
+
+                        if ([string]::IsNullOrWhiteSpace($EvaluateSTIGOutputDirectory)) {
+                            $EvaluateSTIGOutputDirectory = Join-Path $EvaluateSTIGInputDirectory "STIG_Checklists"
+                        }
+
+                        # Create STIG output directory
+                        if (-not (Test-Path $EvaluateSTIGOutputDirectory)) {
+                            Write-Host "Creating STIG output directory: $EvaluateSTIGOutputDirectory" -ForegroundColor Cyan
+                            New-Item -Path $EvaluateSTIGOutputDirectory -ItemType Directory -Force | Out-Null
+                            Write-InstallLog -Message "Created STIG output directory: $EvaluateSTIGOutputDirectory" -Level SUCCESS
+                        }
+
+                        # Interactive prompts for device type if not specified
+                        if (-not $PSBoundParameters.ContainsKey('EvaluateSTIGDeviceType')) {
+                            Write-Host ""
+                            Write-Host "Select device types to scan for STIG compliance:" -ForegroundColor Cyan
+                            Write-Host "  1. Router only" -ForegroundColor White
+                            Write-Host "  2. Switch only" -ForegroundColor White
+                            Write-Host "  3. Both Router and Switch (recommended)" -ForegroundColor White
+                            Write-Host ""
+
+                            $deviceChoice = Read-Host "Select option (1-3) [3]"
+                            if ([string]::IsNullOrWhiteSpace($deviceChoice)) { $deviceChoice = '3' }
+
+                            switch ($deviceChoice) {
+                                '1' { $EvaluateSTIGDeviceType = @('Router') }
+                                '2' { $EvaluateSTIGDeviceType = @('Switch') }
+                                default { $EvaluateSTIGDeviceType = @('Router','Switch') }
+                            }
+                        }
+
+                        Write-Host ""
+                        Write-Host "Evaluate-STIG Configuration:" -ForegroundColor Cyan
+                        Write-Host "  Input Directory: $EvaluateSTIGInputDirectory" -ForegroundColor Gray
+                        Write-Host "  Output Directory: $EvaluateSTIGOutputDirectory" -ForegroundColor Gray
+                        Write-Host "  Device Types: $($EvaluateSTIGDeviceType -join ', ')" -ForegroundColor Gray
+                        Write-Host "  Scan Type: $EvaluateSTIGScanType" -ForegroundColor Gray
+                        Write-Host "  Schedule: Monthly on day $EvaluateSTIGScheduleDay at $EvaluateSTIGScheduleTime" -ForegroundColor Gray
+                        Write-Host "  Output Formats: $($EvaluateSTIGOutputFormat -join ', ')" -ForegroundColor Gray
+                        Write-Host ""
+
+                        # Create Evaluate-STIG scheduled task
+                        try {
+                            $stigTaskName = New-EvaluateSTIGTask `
+                                -PowerShell7Path $script:PowerShell7Path `
+                                -EvaluateSTIGScriptPath $EvaluateSTIGPath `
+                                -InputDirectory $EvaluateSTIGInputDirectory `
+                                -OutputDirectory $EvaluateSTIGOutputDirectory `
+                                -ServiceAccount $serviceAccountCred `
+                                -ScheduleDay $EvaluateSTIGScheduleDay `
+                                -ScheduleTime $EvaluateSTIGScheduleTime `
+                                -ScanType $EvaluateSTIGScanType `
+                                -DeviceType $EvaluateSTIGDeviceType `
+                                -OutputFormat $EvaluateSTIGOutputFormat `
+                                -ThrottleLimit $EvaluateSTIGThrottleLimit `
+                                -VulnTimeout $EvaluateSTIGVulnTimeout `
+                                -FileSearchTimeout $EvaluateSTIGFileSearchTimeout `
+                                -PreviousToKeep $EvaluateSTIGPreviousToKeep `
+                                -Marking $EvaluateSTIGMarking `
+                                -TargetComments $EvaluateSTIGTargetComments `
+                                -ApplyTattoo $EvaluateSTIGApplyTattoo.IsPresent `
+                                -AllowDeprecated $EvaluateSTIGAllowDeprecated.IsPresent
+
+                            $stigTaskCreated = $true
+                            Write-Host ""
+                            Write-Host "Evaluate-STIG integration completed successfully" -ForegroundColor Green
+                            Write-InstallLog -Message "Evaluate-STIG task created: $stigTaskName" -Level SUCCESS
+                        }
+                        catch {
+                            Write-Host "ERROR: Failed to create Evaluate-STIG task: $_" -ForegroundColor Red
+                            Write-InstallLog -Message "Failed to create Evaluate-STIG task: $_" -Level ERROR
+
+                            $response = Read-Host "Continue installation despite Evaluate-STIG task creation failure? (yes/no) [yes]"
+                            if ([string]::IsNullOrWhiteSpace($response)) { $response = 'yes' }
+
+                            if ($response -notmatch '^y(es)?$|^Y(ES)?$') {
+                                throw "Installation cancelled - Evaluate-STIG task creation failed"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         Write-LogSection "INSTALLATION COMPLETE"
         Write-InstallLog -Message "Installation Path: $InstallPath" -Level SUCCESS
         Write-InstallLog -Message "Python Script: $scriptPath" -Level SUCCESS
@@ -2611,7 +2808,7 @@ function Install-CiscoCollector {
             Write-InstallLog -Message "Scheduled Task: $createdTaskName" -Level SUCCESS
             Write-InstallLog -Message "Schedule: $ScheduleType at $ScheduleTime" -Level SUCCESS
             Write-InstallLog -Message "Service Account: $($serviceAccountCred.UserName)" -Level SUCCESS
-            
+
             if ($credSetupSuccess) {
                 Write-InstallLog -Message "Device Credentials: Configured" -Level SUCCESS
             }
@@ -2619,10 +2816,46 @@ function Install-CiscoCollector {
                 Write-InstallLog -Message "Device Credentials: Manual setup required" -Level WARNING
             }
         }
-        
+
+        if ($stigTaskCreated -and $stigTaskName) {
+            Write-InstallLog -Message "Evaluate-STIG Task: $stigTaskName" -Level SUCCESS
+            Write-InstallLog -Message "STIG Schedule: Monthly on day $EvaluateSTIGScheduleDay at $EvaluateSTIGScheduleTime" -Level SUCCESS
+            Write-InstallLog -Message "STIG Input Directory: $EvaluateSTIGInputDirectory" -Level SUCCESS
+            Write-InstallLog -Message "STIG Output Directory: $EvaluateSTIGOutputDirectory" -Level SUCCESS
+            Write-InstallLog -Message "STIG Device Types: $($EvaluateSTIGDeviceType -join ', ')" -Level SUCCESS
+        }
+
         Write-Host "`n" -NoNewline
         Write-Host "Installation successful! " -ForegroundColor Green -NoNewline
         Write-Host "Check log file for details: $script:LogFile" -ForegroundColor White
+
+        if ($stigTaskCreated) {
+            Write-Host ""
+            Write-Host ("=" * 80) -ForegroundColor Green
+            Write-Host "EVALUATE-STIG INTEGRATION SUMMARY" -ForegroundColor Green
+            Write-Host ("=" * 80) -ForegroundColor Green
+            Write-Host ""
+            Write-Host "Evaluate-STIG has been configured successfully!" -ForegroundColor Green
+            Write-Host ""
+            Write-Host "Configuration:" -ForegroundColor Cyan
+            Write-Host "  Task Name: $stigTaskName" -ForegroundColor White
+            Write-Host "  Schedule: Monthly on day $EvaluateSTIGScheduleDay at $EvaluateSTIGScheduleTime" -ForegroundColor White
+            Write-Host "  Input Directory: $EvaluateSTIGInputDirectory" -ForegroundColor White
+            Write-Host "  Output Directory: $EvaluateSTIGOutputDirectory" -ForegroundColor White
+            Write-Host "  Device Types: $($EvaluateSTIGDeviceType -join ', ')" -ForegroundColor White
+            Write-Host "  Scan Type: $EvaluateSTIGScanType" -ForegroundColor White
+            Write-Host "  Output Formats: $($EvaluateSTIGOutputFormat -join ', ')" -ForegroundColor White
+            Write-Host ""
+            Write-Host "The Evaluate-STIG task will automatically:" -ForegroundColor Cyan
+            Write-Host "  1. Scan collected tech-support files monthly" -ForegroundColor Gray
+            Write-Host "  2. Generate STIG checklists for each device" -ForegroundColor Gray
+            Write-Host "  3. Save results to the STIG_Checklists directory" -ForegroundColor Gray
+            Write-Host ""
+            Write-Host "You can manually run the STIG task using:" -ForegroundColor Cyan
+            Write-Host "  Start-ScheduledTask -TaskName '$stigTaskName'" -ForegroundColor Gray
+            Write-Host ""
+            Write-Host ("=" * 80) -ForegroundColor Green
+        }
 
         # Offer initial task run if credentials were configured successfully
         if (-not $SkipTaskCreation -and $ScheduleType -ne 'None' -and $credSetupSuccess) {
