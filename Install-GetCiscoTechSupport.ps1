@@ -2069,7 +2069,7 @@ function New-EvaluateSTIGTask {
         $taskTrigger = New-ScheduledTaskTrigger -Daily -At $ScheduleTime
 
         # Task settings
-        $taskSettings = New-ScheduledTaskSettings `
+        $taskSettings = New-ScheduledTaskSettingsSet `
             -AllowStartIfOnBatteries `
             -DontStopIfGoingOnBatteries `
             -StartWhenAvailable `
