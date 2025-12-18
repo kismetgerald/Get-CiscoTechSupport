@@ -2063,11 +2063,10 @@ function New-EvaluateSTIGTask {
             -Argument $argumentString `
             -WorkingDirectory (Split-Path $EvaluateSTIGScriptPath -Parent)
 
-        # Create monthly trigger
-        $taskTrigger = New-ScheduledTaskTrigger `
-            -Monthly `
-            -DaysOfMonth $ScheduleDay `
-            -At $ScheduleTime
+        # Create monthly trigger using COM object for proper monthly scheduling
+        # Note: New-ScheduledTaskTrigger doesn't support monthly triggers with specific days
+        # We'll create a temporary daily trigger and modify it after task registration
+        $taskTrigger = New-ScheduledTaskTrigger -Daily -At $ScheduleTime
 
         # Task settings
         $taskSettings = New-ScheduledTaskSettings `
@@ -2107,6 +2106,39 @@ function New-EvaluateSTIGTask {
             -Force
 
         if ($task) {
+            # Modify the trigger to be monthly using COM object
+            # This is necessary because New-ScheduledTaskTrigger doesn't support monthly scheduling
+            try {
+                Write-InstallLog -Message "Modifying trigger to monthly schedule" -Level INFO -NoConsole
+                $taskService = New-Object -ComObject Schedule.Service
+                $taskService.Connect()
+                $taskFolder = $taskService.GetFolder("\")
+                $taskDefinition = $taskFolder.GetTask($taskName).Definition
+
+                # Get the first trigger and modify it to monthly
+                $trigger = $taskDefinition.Triggers.Item(1)
+                $trigger.Type = 4  # Monthly trigger type
+                $trigger.DaysOfMonth = [Math]::Pow(2, $ScheduleDay - 1)  # Bit mask for specific day
+                $trigger.MonthsOfYear = 0xFFF  # All months (bit mask)
+                $trigger.StartBoundary = $trigger.StartBoundary  # Preserve start time
+
+                # Update the task with modified trigger
+                $taskFolder.RegisterTaskDefinition(
+                    $taskName,
+                    $taskDefinition,
+                    6,  # TASK_CREATE_OR_UPDATE
+                    $ServiceAccount.UserName,
+                    $ServiceAccount.GetNetworkCredential().Password,
+                    1   # TASK_LOGON_PASSWORD
+                ) | Out-Null
+
+                Write-InstallLog -Message "Monthly trigger configured successfully" -Level SUCCESS -NoConsole
+            }
+            catch {
+                Write-InstallLog -Message "Warning: Failed to modify trigger to monthly: $_" -Level WARNING
+                Write-InstallLog -Message "Task created with daily trigger - may need manual adjustment" -Level WARNING
+            }
+
             Write-Host "Evaluate-STIG task created successfully" -ForegroundColor Green
             Write-InstallLog -Message "Evaluate-STIG scheduled task created: $taskName" -Level SUCCESS
             Write-InstallLog -Message "Schedule: Monthly on day $ScheduleDay at $ScheduleTime" -Level INFO
