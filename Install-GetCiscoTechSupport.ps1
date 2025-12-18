@@ -739,8 +739,8 @@ function Start-ServiceAccountCredentialSetup {
         
         $response = Read-Host "Proceed with automated credential setup? (yes/no) [yes]"
         if ([string]::IsNullOrWhiteSpace($response)) { $response = 'yes' }
-        
-        if ($response -notmatch '^y(es)?$') {
+
+        if ($response -notmatch '^y(es)?$|^Y(ES)?$') {
             Write-Host ""
             Write-Host "Credential setup skipped - you'll need to configure manually" -ForegroundColor Yellow
             Write-InstallLog -Message "Automated credential setup declined by user" -Level WARNING
@@ -1763,7 +1763,7 @@ function Install-CiscoCollector {
         if ((Test-Path $InstallPath) -and -not $Force) {
             Write-InstallLog -Message "Installation directory already exists: $InstallPath" -Level WARNING
             $response = Read-Host "Overwrite existing installation? (yes/no)"
-            if ($response -notmatch '^y(es)?$') {
+            if ($response -notmatch '^y(es)?$|^Y(ES)?$') {
                 Write-InstallLog -Message "Installation cancelled by user" -Level WARNING
                 return
             }
