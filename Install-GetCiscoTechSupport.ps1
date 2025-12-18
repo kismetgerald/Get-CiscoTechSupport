@@ -2688,6 +2688,9 @@ function Install-CiscoCollector {
                         $EvaluateSTIGPath = Read-Host "Path to Evaluate-STIG.ps1"
                     }
 
+                    # Trim any surrounding quotes from the path (common when copy-pasting)
+                    $EvaluateSTIGPath = $EvaluateSTIGPath.Trim('"').Trim("'")
+
                     # Validate Evaluate-STIG script exists
                     if (-not (Test-Path $EvaluateSTIGPath)) {
                         Write-Host "ERROR: Evaluate-STIG.ps1 not found at: $EvaluateSTIGPath" -ForegroundColor Red
