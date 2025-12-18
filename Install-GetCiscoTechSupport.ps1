@@ -1416,30 +1416,88 @@ function Remove-CiscoCollectorTask {
     <#
     .SYNOPSIS
         Removes Cisco Tech-Support Collector scheduled task(s)
-    
+
+    .PARAMETER Mode
+        Collection mode to check for conflict during installation. If provided, only checks for tasks
+        matching this mode and prompts user to replace. If not provided (uninstall context), removes
+        all collector tasks.
+
     .PARAMETER TaskName
         Specific task name to remove. If not provided, prompts user to select.
-    
+
     .PARAMETER Force
         Remove all collector tasks without prompting
+
+    .DESCRIPTION
+        During installation (Mode specified): Checks for existing task with same collection mode.
+        If found, prompts user to replace or cancel. This allows multiple collection modes to coexist.
+
+        During uninstallation (Mode not specified): Removes all collector tasks found.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $false)]
+        [ValidateSet('DeviceList', 'Discovery')]
+        [string]$Mode,
+
+        [Parameter(Mandatory = $false)]
         [string]$TaskName,
-        
+
         [Parameter(Mandatory = $false)]
         [switch]$Force
     )
-    
+
     try {
         $existingTasks = Get-ExistingCollectorTasks
-        
+
         if ($existingTasks.Count -eq 0) {
             Write-InstallLog -Message "No Cisco Tech-Support Collector tasks found" -Level INFO
             return $false
         }
-        
+
+        # Installation context: Check for conflicting task with same mode
+        if ($Mode) {
+            $modeTaskName = Get-CollectionModeTaskName -Mode $Mode
+            $conflictingTask = $existingTasks | Where-Object { $_.TaskName -eq $modeTaskName }
+
+            if ($conflictingTask) {
+                Write-Host "`nExisting task found for " -NoNewline -ForegroundColor Yellow
+                Write-Host "$Mode" -NoNewline -ForegroundColor White
+                Write-Host " mode:" -ForegroundColor Yellow
+                Write-Host "  Task: " -NoNewline -ForegroundColor Gray
+                Write-Host "$($conflictingTask.TaskName)" -ForegroundColor White
+                Write-Host "  State: $($conflictingTask.State)" -ForegroundColor Gray
+
+                $taskInfo = Get-ScheduledTaskInfo -TaskName $conflictingTask.TaskName -ErrorAction SilentlyContinue
+                if ($taskInfo -and $taskInfo.LastRunTime) {
+                    Write-Host "  Last Run: $($taskInfo.LastRunTime)" -ForegroundColor Gray
+                }
+
+                Write-Host ""
+                $replace = Read-Host "Replace existing task? (Y/N) [Y]"
+
+                if ($replace -match '^n(o)?$|^N(O)?$') {
+                    Write-Host "Installation cancelled - keeping existing task" -ForegroundColor Yellow
+                    Write-InstallLog -Message "Installation cancelled - user chose to keep existing $Mode task" -Level WARNING
+                    return $false
+                }
+                else {
+                    # User wants to replace (Y or Enter)
+                    Unregister-ScheduledTask -TaskName $conflictingTask.TaskName -Confirm:$false -ErrorAction Stop
+                    Write-Host "Existing task removed" -ForegroundColor Green
+                    Write-InstallLog -Message "Removed existing $Mode task: $($conflictingTask.TaskName)" -Level SUCCESS
+                    return $true
+                }
+            }
+            else {
+                # No conflict - allow installation to proceed
+                Write-InstallLog -Message "No conflicting task found for $Mode mode" -Level INFO -NoConsole
+                return $false
+            }
+        }
+
+        # Uninstall context: Remove tasks (original behavior)
+
         # If specific task name provided, remove only that task
         if ($TaskName) {
             $taskToRemove = $existingTasks | Where-Object { $_.TaskName -eq $TaskName }
@@ -1453,7 +1511,7 @@ function Remove-CiscoCollectorTask {
                 return $false
             }
         }
-        
+
         # If Force flag, remove all tasks without prompting
         if ($Force) {
             foreach ($task in $existingTasks) {
@@ -1462,10 +1520,8 @@ function Remove-CiscoCollectorTask {
             }
             return $true
         }
-        
-        # Single task found - remove without prompting during uninstall
-        Write-InstallLog -Message "Checking task count: $($existingTasks.Count), Type: $($existingTasks.GetType().Name)" -Level INFO -NoConsole
 
+        # Single task found - remove without prompting during uninstall
         if ($existingTasks.Count -eq 1) {
             $taskToRemove = $existingTasks[0]
             Write-Host "`nFound scheduled task: " -NoNewline -ForegroundColor Cyan
@@ -1477,28 +1533,27 @@ function Remove-CiscoCollectorTask {
         }
         else {
             # Multiple tasks - let user choose
-            Write-InstallLog -Message "Entering multiple task selection (Count: $($existingTasks.Count))" -Level INFO -NoConsole
             Write-Host "`nFound multiple Cisco Tech-Support Collector tasks:" -ForegroundColor Yellow
             Write-Host ""
-            
+
             for ($i = 0; $i -lt $existingTasks.Count; $i++) {
                 $task = $existingTasks[$i]
                 Write-Host "  [$($i + 1)] $($task.TaskName)" -ForegroundColor White
                 Write-Host "      State: $($task.State)" -ForegroundColor Gray
-                
+
                 $taskInfo = Get-ScheduledTaskInfo -TaskName $task.TaskName -ErrorAction SilentlyContinue
                 if ($taskInfo -and $taskInfo.LastRunTime) {
                     Write-Host "      Last Run: $($taskInfo.LastRunTime)" -ForegroundColor Gray
                 }
             }
-            
+
             Write-Host "  [A] Remove ALL tasks" -ForegroundColor Cyan
             Write-Host "  [N] Don't remove any tasks" -ForegroundColor Cyan
             Write-Host ""
-            
+
             $selection = Read-Host "Select task(s) to remove [N]"
             if ([string]::IsNullOrWhiteSpace($selection)) { $selection = 'N' }
-            
+
             if ($selection -eq 'A' -or $selection -eq 'a') {
                 # Remove all tasks
                 foreach ($task in $existingTasks) {
@@ -2357,21 +2412,32 @@ function Install-CiscoCollector {
 
         if (-not $SkipTaskCreation -and $ScheduleType -ne 'None') {
             Write-LogSection "SCHEDULED TASK CREATION"
-            
-            Remove-CiscoCollectorTask
-            
+
             Write-Host "`nCollection Mode Configuration" -ForegroundColor Cyan
             Write-Host "=========================================" -ForegroundColor Cyan
             Write-Host "  1. Device List - Collect from specific devices" -ForegroundColor White
             Write-Host "  2. Discovery - Auto-discover devices on network" -ForegroundColor White
             $modeChoice = Read-Host "`nSelection [1]"
             if ([string]::IsNullOrWhiteSpace($modeChoice)) { $modeChoice = '1' }
-            
+
             $taskArguments = ""
             $collectionMode = 'DeviceList'  # Default to DeviceList mode
-            
+
             if ($modeChoice -eq '2') {
                 $collectionMode = 'Discovery'  # Set to Discovery mode
+            }
+
+            # Check for existing task with same collection mode
+            $taskRemoved = Remove-CiscoCollectorTask -Mode $collectionMode
+            if ($taskRemoved -eq $false -and (Get-ExistingCollectorTasks | Where-Object { $_.TaskName -eq (Get-CollectionModeTaskName -Mode $collectionMode) })) {
+                # User chose not to replace existing task - exit installation
+                Write-Host "`nInstallation process stopped." -ForegroundColor Yellow
+                Write-InstallLog -Message "Installation cancelled - user declined to replace existing $collectionMode task" -Level WARNING
+                return
+            }
+
+            if ($modeChoice -eq '2') {
+                # Continue with Discovery mode configuration
                 Write-Host "`nDiscovery Method" -ForegroundColor Cyan
                 Write-Host "=========================================" -ForegroundColor Cyan
                 Write-Host "  1. CDP Discovery - Query default gateway for network topology (Recommended)" -ForegroundColor White
