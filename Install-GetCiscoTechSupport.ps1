@@ -2082,32 +2082,25 @@ function Install-CiscoCollector {
         Write-Host "`n" -NoNewline
         Write-Host "Installation successful! " -ForegroundColor Green -NoNewline
         Write-Host "Check log file for details: $script:LogFile" -ForegroundColor White
-        
+
         # Offer initial task run if credentials were configured successfully
         if (-not $SkipTaskCreation -and $ScheduleType -ne 'None' -and $credSetupSuccess) {
             Start-InitialTaskRun -TaskName $createdTaskName -ServiceAccountName $serviceAccountCred.UserName
         }
-        
-        Write-Host "`n" -NoNewline
-        Write-Host ("=" * 80) -ForegroundColor Cyan
-        Write-Host "NEXT STEPS" -ForegroundColor Cyan
-        Write-Host ("=" * 80) -ForegroundColor Cyan
-        Write-Host ""
-        
-        $devicesFilePath = Join-Path $InstallPath "devices.txt"
-        $credFilePath = Join-Path $InstallPath ".cisco_credentials"
-        
-        $stepNumber = 1
-        
-        # Step 1: Credential setup (conditional based on automated setup success)
-        if ($credSetupSuccess) {
-            Write-Host "$stepNumber. Cisco device credentials: CONFIGURED" -ForegroundColor Green
-            Write-Host "   Credential file: $credFilePath" -ForegroundColor Gray
-            Write-Host "   Status: Ready for use" -ForegroundColor Gray
+
+        # Only show NEXT STEPS if credential setup failed
+        if (-not $credSetupSuccess) {
+            Write-Host "`n" -NoNewline
+            Write-Host ("=" * 80) -ForegroundColor Cyan
+            Write-Host "NEXT STEPS" -ForegroundColor Cyan
+            Write-Host ("=" * 80) -ForegroundColor Cyan
             Write-Host ""
-            $stepNumber++
-        }
-        else {
+
+            $devicesFilePath = Join-Path $InstallPath "devices.txt"
+            $credFilePath = Join-Path $InstallPath ".cisco_credentials"
+
+            $stepNumber = 1
+
             Write-Host "$stepNumber. Configure Cisco device credentials (REQUIRED):" -ForegroundColor White
             Write-Host ""
             Write-Host "   The service account ($($serviceAccountCred.UserName)) runs the scheduled task." -ForegroundColor White
@@ -2161,63 +2154,67 @@ function Install-CiscoCollector {
             Write-Host "   - Enable password (if required for privilege level 15)" -ForegroundColor Gray
             Write-Host ""
             $stepNumber++
-        }
-        
-        # Next step: Device list or test
-        if ($isDiscoveryMode) {
-            Write-Host "$stepNumber. Test the collection manually (as the service account):" -ForegroundColor White
-            Write-Host "   Using the same runas/PsExec method from step 1:" -ForegroundColor Gray
-            Write-Host "   cd `"$InstallPath`"" -ForegroundColor DarkGray
-            
-            # Provide appropriate test command based on discovery method
-            if ($taskArguments -like "*--method cdp*") {
-                Write-Host "   $($script:PythonSubfolder)\python.exe $script:PythonScriptName --discover --method cdp" -ForegroundColor DarkGray
+
+            # Next step: Device list or test
+            if ($isDiscoveryMode) {
+                Write-Host "$stepNumber. Test the collection manually (as the service account):" -ForegroundColor White
+                Write-Host "   Using the same runas/PsExec method from step 1:" -ForegroundColor Gray
+                Write-Host "   cd `"$InstallPath`"" -ForegroundColor DarkGray
+
+                # Provide appropriate test command based on discovery method
+                if ($taskArguments -like "*--method cdp*") {
+                    Write-Host "   $($script:PythonSubfolder)\python.exe $script:PythonScriptName --discover --method cdp" -ForegroundColor DarkGray
+                }
+                elseif ($taskArguments -like "*--method snmp*") {
+                    Write-Host "   $($script:PythonSubfolder)\python.exe $script:PythonScriptName --discover --method snmp --subnet <your_subnet>" -ForegroundColor DarkGray
+                }
+                elseif ($taskArguments -like "*--method arp*") {
+                    Write-Host "   $($script:PythonSubfolder)\python.exe $script:PythonScriptName --discover --method arp" -ForegroundColor DarkGray
+                }
+                elseif ($taskArguments -like "*--method hybrid*") {
+                    Write-Host "   $($script:PythonSubfolder)\python.exe $script:PythonScriptName --discover --method hybrid" -ForegroundColor DarkGray
+                }
+                else {
+                    # Fallback to generic discover command
+                    Write-Host "   $($script:PythonSubfolder)\python.exe $script:PythonScriptName --discover" -ForegroundColor DarkGray
+                }
             }
-            elseif ($taskArguments -like "*--method snmp*") {
-                Write-Host "   $($script:PythonSubfolder)\python.exe $script:PythonScriptName --discover --method snmp --subnet <your_subnet>" -ForegroundColor DarkGray
-            }
-            elseif ($taskArguments -like "*--method arp*") {
-                Write-Host "   $($script:PythonSubfolder)\python.exe $script:PythonScriptName --discover --method arp" -ForegroundColor DarkGray
-            }
-            elseif ($taskArguments -like "*--method hybrid*") {
-                Write-Host "   $($script:PythonSubfolder)\python.exe $script:PythonScriptName --discover --method hybrid" -ForegroundColor DarkGray
+            elseif (Test-Path $devicesFilePath) {
+                Write-Host "$stepNumber. Verify the device list file was created correctly:" -ForegroundColor White
+                Write-Host "   type `"$devicesFilePath`"" -ForegroundColor Gray
+                Write-Host "   (Should contain the device IPs/hostnames you specified)" -ForegroundColor DarkGray
+                Write-Host ""
+                $stepNumber++
+                Write-Host "$stepNumber. Test the collection manually (as the service account):" -ForegroundColor White
+                Write-Host "   Using the same runas/PsExec method:" -ForegroundColor Gray
+                Write-Host "   cd `"$InstallPath`"" -ForegroundColor DarkGray
+                Write-Host "   $($script:PythonSubfolder)\python.exe $script:PythonScriptName -f devices.txt" -ForegroundColor DarkGray
             }
             else {
-                # Fallback to generic discover command
-                Write-Host "   $($script:PythonSubfolder)\python.exe $script:PythonScriptName --discover" -ForegroundColor DarkGray
+                Write-Host "$stepNumber. Verify your device list file contains the correct devices" -ForegroundColor White
+                Write-Host ""
+                $stepNumber++
+                Write-Host "$stepNumber. Test the collection manually (as the service account):" -ForegroundColor White
+                Write-Host "   Using the same runas/PsExec method:" -ForegroundColor Gray
+                Write-Host "   cd `"$InstallPath`"" -ForegroundColor DarkGray
+                Write-Host "   $($script:PythonSubfolder)\python.exe $script:PythonScriptName -f <your_device_file>" -ForegroundColor DarkGray
+            }
+            Write-Host ""
+            $stepNumber++
+
+            # Final step: Verify task
+            if (-not $SkipTaskCreation -and $ScheduleType -ne 'None') {
+                Write-Host "$stepNumber. Verify scheduled task configuration:" -ForegroundColor White
+                Write-Host "   Get-ScheduledTask -TaskName '$createdTaskName' | Select-Object TaskName,State" -ForegroundColor Gray
+                Write-Host "   Get-ScheduledTask -TaskName '$createdTaskName' | Select-Object -ExpandProperty Principal" -ForegroundColor Gray
+                Write-Host ""
             }
         }
-        elseif (Test-Path $devicesFilePath) {
-            Write-Host "$stepNumber. Verify the device list file was created correctly:" -ForegroundColor White
-            Write-Host "   type `"$devicesFilePath`"" -ForegroundColor Gray
-            Write-Host "   (Should contain the device IPs/hostnames you specified)" -ForegroundColor DarkGray
-            Write-Host ""
-            $stepNumber++
-            Write-Host "$stepNumber. Test the collection manually (as the service account):" -ForegroundColor White
-            Write-Host "   Using the same runas/PsExec method:" -ForegroundColor Gray
-            Write-Host "   cd `"$InstallPath`"" -ForegroundColor DarkGray
-            Write-Host "   $($script:PythonSubfolder)\python.exe $script:PythonScriptName -f devices.txt" -ForegroundColor DarkGray
-        }
-        else {
-            Write-Host "$stepNumber. Verify your device list file contains the correct devices" -ForegroundColor White
-            Write-Host ""
-            $stepNumber++
-            Write-Host "$stepNumber. Test the collection manually (as the service account):" -ForegroundColor White
-            Write-Host "   Using the same runas/PsExec method:" -ForegroundColor Gray
-            Write-Host "   cd `"$InstallPath`"" -ForegroundColor DarkGray
-            Write-Host "   $($script:PythonSubfolder)\python.exe $script:PythonScriptName -f <your_device_file>" -ForegroundColor DarkGray
-        }
-        Write-Host ""
-        $stepNumber++
-        
-        # Final step: Verify task
-        if (-not $SkipTaskCreation -and $ScheduleType -ne 'None') {
-            Write-Host "$stepNumber. Verify scheduled task configuration:" -ForegroundColor White
-            Write-Host "   Get-ScheduledTask -TaskName '$createdTaskName' | Select-Object TaskName,State" -ForegroundColor Gray
-            Write-Host "   Get-ScheduledTask -TaskName '$createdTaskName' | Select-Object -ExpandProperty Principal" -ForegroundColor Gray
-            Write-Host ""
-        }
-        
+
+        # Always show IMPORTANT SECURITY NOTES
+        $devicesFilePath = Join-Path $InstallPath "devices.txt"
+        $credFilePath = Join-Path $InstallPath ".cisco_credentials"
+
         Write-Host ("=" * 80) -ForegroundColor Yellow
         Write-Host "IMPORTANT SECURITY NOTES" -ForegroundColor Yellow
         Write-Host ("=" * 80) -ForegroundColor Yellow
@@ -2244,7 +2241,7 @@ function Install-CiscoCollector {
         Write-Host ""
         Write-Host ("=" * 80) -ForegroundColor Yellow
         Write-Host ""
-        
+
     }
     catch {
         Write-InstallLog -Message "Installation failed: $_" -Level ERROR
