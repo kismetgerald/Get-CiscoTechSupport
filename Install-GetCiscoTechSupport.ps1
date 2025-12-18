@@ -576,7 +576,7 @@ function Expand-ArchiveCompat {
         else {
             # PowerShell 5.1: Check if destination exists and handle manually
             if (Test-Path $DestinationPath) {
-                Write-InstallLog -Message "Destination exists, removing before extraction" -Level INFO
+                Write-InstallLog -Message "Destination exists, removing before extraction" -Level INFO -NoConsole
                 Remove-Item -Path $DestinationPath -Recurse -Force -ErrorAction Stop
             }
             
