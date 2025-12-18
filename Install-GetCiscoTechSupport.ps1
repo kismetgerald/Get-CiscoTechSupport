@@ -54,6 +54,72 @@
 .PARAMETER SkipTaskCreation
     Skip scheduled task creation
 
+.PARAMETER EnableEvaluateSTIG
+    Enable Evaluate-STIG integration for automated STIG checklist generation.
+    Requires PowerShell 7.x to be installed.
+
+.PARAMETER EvaluateSTIGPath
+    Full path to Evaluate-STIG.ps1 script (including .ps1 extension).
+    Required when EnableEvaluateSTIG is specified.
+    Example: C:\Scripts\Evaluate-STIG\Evaluate-STIG.ps1
+
+.PARAMETER EvaluateSTIGInputDirectory
+    Directory containing tech-support output files to scan.
+    Default: <InstallPath>\Results
+
+.PARAMETER EvaluateSTIGOutputDirectory
+    Directory where STIG checklists will be saved.
+    Default: <InstallPath>\Results\STIG_Checklists
+
+.PARAMETER EvaluateSTIGScanType
+    Classification level for STIG scanning: Unclassified or Classified.
+    Default: Classified
+
+.PARAMETER EvaluateSTIGDeviceType
+    Device types to scan: Router, Switch, or both.
+    Default: @('Router','Switch')
+
+.PARAMETER EvaluateSTIGOutputFormat
+    Output formats for STIG checklists. Multiple formats can be specified.
+    Valid: CKL, CKLB, CSV, XCCDF, CombinedCKL, CombinedCKLB, CombinedCSV, Summary, OQE
+    Default: @('CKLB','CombinedCKLB','Summary','XCCDF')
+
+.PARAMETER EvaluateSTIGThrottleLimit
+    Maximum number of config files to scan concurrently.
+    Default: 10
+
+.PARAMETER EvaluateSTIGScheduleDay
+    Day of the month to run Evaluate-STIG (1-28).
+    Default: 1 (first day of each month)
+
+.PARAMETER EvaluateSTIGScheduleTime
+    Time to run Evaluate-STIG in HH:mm format.
+    Default: 04:00
+
+.PARAMETER EvaluateSTIGVulnTimeout
+    Maximum time in minutes for a single vulnerability check (1-1440).
+    Default: 15
+
+.PARAMETER EvaluateSTIGFileSearchTimeout
+    Maximum time in minutes for file type pre-scan search (1-1440).
+    Default: 240
+
+.PARAMETER EvaluateSTIGPreviousToKeep
+    Number of previous scan results to retain (-1 to keep all).
+    Default: 3
+
+.PARAMETER EvaluateSTIGMarking
+    Optional classification marking (e.g., CUI, Confidential, Secret).
+
+.PARAMETER EvaluateSTIGTargetComments
+    Optional comments to include in STIG checklists.
+
+.PARAMETER EvaluateSTIGApplyTattoo
+    Apply Evaluate-STIG tattooing to mark assets.
+
+.PARAMETER EvaluateSTIGAllowDeprecated
+    Allow scanning of deprecated STIGs no longer available on cyber.mil.
+
 .PARAMETER Uninstall
     Uninstall the Cisco Tech-Support Collector and remove all components
 
@@ -77,6 +143,26 @@
     .\Install-GetCiscoTechSupport.ps1 -Uninstall
 
     Completely removes the Cisco Tech-Support Collector installation
+
+.EXAMPLE
+    .\Install-GetCiscoTechSupport.ps1 -ArchivePath ".\Get-CiscoTechSupport.zip" `
+        -EnableEvaluateSTIG `
+        -EvaluateSTIGPath "C:\Scripts\Evaluate-STIG\Evaluate-STIG.ps1"
+
+    Installs with Evaluate-STIG integration using default settings.
+    Creates monthly STIG checklist generation task on day 1 at 04:00.
+
+.EXAMPLE
+    .\Install-GetCiscoTechSupport.ps1 -ArchivePath ".\Get-CiscoTechSupport.zip" `
+        -EnableEvaluateSTIG `
+        -EvaluateSTIGPath "C:\Scripts\Evaluate-STIG\Evaluate-STIG.ps1" `
+        -EvaluateSTIGOutputDirectory "D:\STIG_Results" `
+        -EvaluateSTIGScheduleDay 15 `
+        -EvaluateSTIGScheduleTime "02:00" `
+        -EvaluateSTIGScanType "Unclassified"
+
+    Installs with customized Evaluate-STIG integration.
+    Saves checklists to D:\STIG_Results and runs on the 15th of each month at 02:00.
 
 .NOTES
     Author: Kismet Agbasi (Github: kismetgerald Email: KismetG17@gmail.com)
@@ -127,6 +213,65 @@ param(
 
     [Parameter(Mandatory = $false, ParameterSetName='Install')]
     [switch]$SkipTaskCreation,
+
+    # Evaluate-STIG Integration Parameters
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
+    [switch]$EnableEvaluateSTIG,
+
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
+    [string]$EvaluateSTIGPath,
+
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
+    [string]$EvaluateSTIGInputDirectory,
+
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
+    [string]$EvaluateSTIGOutputDirectory,
+
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
+    [ValidateSet('Unclassified','Classified')]
+    [string]$EvaluateSTIGScanType = 'Classified',
+
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
+    [string[]]$EvaluateSTIGDeviceType = @('Router','Switch'),
+
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
+    [string[]]$EvaluateSTIGOutputFormat = @('CKLB','CombinedCKLB','Summary','XCCDF'),
+
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
+    [ValidateRange(1,99)]
+    [int]$EvaluateSTIGThrottleLimit = 10,
+
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
+    [ValidateRange(1,28)]
+    [int]$EvaluateSTIGScheduleDay = 1,
+
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
+    [ValidatePattern('^\d{2}:\d{2}$')]
+    [string]$EvaluateSTIGScheduleTime = '04:00',
+
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
+    [ValidateRange(1,1440)]
+    [int]$EvaluateSTIGVulnTimeout = 15,
+
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
+    [ValidateRange(1,1440)]
+    [int]$EvaluateSTIGFileSearchTimeout = 240,
+
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
+    [ValidateRange(-1,99)]
+    [int]$EvaluateSTIGPreviousToKeep = 3,
+
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
+    [string]$EvaluateSTIGMarking,
+
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
+    [string]$EvaluateSTIGTargetComments,
+
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
+    [switch]$EvaluateSTIGApplyTattoo,
+
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
+    [switch]$EvaluateSTIGAllowDeprecated,
 
     [Parameter(Mandatory = $true, ParameterSetName='Uninstall')]
     [switch]$Uninstall
@@ -1563,6 +1708,396 @@ function Start-InitialTaskRun {
 
 #endregion
 
+#region Evaluate-STIG Integration Functions
+function Get-PowerShell7Path {
+    <#
+    .SYNOPSIS
+        Detects PowerShell 7.x installation with fallback to user prompt
+
+    .DESCRIPTION
+        Auto-detects PowerShell 7.x via PATH and common locations.
+        Falls back to prompting user for custom path if auto-detection fails.
+        Designed for air-gapped environments where manual installation is required.
+
+    .OUTPUTS
+        Returns hashtable with Available, Path, and Version properties
+    #>
+    [CmdletBinding()]
+    param()
+
+    Write-Host "Detecting PowerShell 7.x installation..." -ForegroundColor Cyan
+    Write-InstallLog -Message "Searching for PowerShell 7.x" -Level INFO
+
+    $pwshPath = $null
+
+    # Method 1: Check PATH (most common in air-gapped environments after installation)
+    Write-Host "  Checking system PATH..." -ForegroundColor Gray
+    try {
+        $pwshCommand = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+        if ($pwshCommand) {
+            $pwshPath = $pwshCommand.Source
+            Write-Host "  Found in PATH: $pwshPath" -ForegroundColor Green
+            Write-InstallLog -Message "PowerShell 7 found in PATH: $pwshPath" -Level SUCCESS
+        }
+    }
+    catch {
+        Write-InstallLog -Message "PowerShell 7 not found in PATH" -Level DEBUG
+    }
+
+    # Method 2: Check common installation directories
+    if (-not $pwshPath) {
+        Write-Host "  Checking common installation locations..." -ForegroundColor Gray
+        $commonPaths = @(
+            "$env:ProgramFiles\PowerShell\7\pwsh.exe"
+            "${env:ProgramFiles(x86)}\PowerShell\7\pwsh.exe"
+            "$env:ProgramFiles\PowerShell\pwsh.exe"  # Generic path
+        )
+
+        foreach ($path in $commonPaths) {
+            if (Test-Path $path) {
+                $pwshPath = $path
+                Write-Host "  Found at: $pwshPath" -ForegroundColor Green
+                Write-InstallLog -Message "PowerShell 7 found at: $pwshPath" -Level SUCCESS
+                break
+            }
+        }
+    }
+
+    # Verify version if found
+    if ($pwshPath) {
+        try {
+            Write-Host "  Verifying PowerShell version..." -ForegroundColor Gray
+            $versionCheck = & $pwshPath -NoProfile -Command {
+                @{
+                    Major = $PSVersionTable.PSVersion.Major
+                    Minor = $PSVersionTable.PSVersion.Minor
+                    Patch = $PSVersionTable.PSVersion.Patch
+                    Full = $PSVersionTable.PSVersion.ToString()
+                }
+            }
+
+            if ($versionCheck.Major -ge 7) {
+                Write-Host "  Version validated: PowerShell $($versionCheck.Full)" -ForegroundColor Green
+                Write-InstallLog -Message "PowerShell version validated: $($versionCheck.Full)" -Level SUCCESS
+
+                return @{
+                    Available = $true
+                    Path = $pwshPath
+                    Version = $versionCheck.Full
+                    VersionMajor = $versionCheck.Major
+                }
+            }
+            else {
+                Write-Host "  WARNING: Found PowerShell $($versionCheck.Full) but version 7.x or higher is required" -ForegroundColor Yellow
+                Write-InstallLog -Message "Found PowerShell $($versionCheck.Full) but v7+ required" -Level WARNING
+                $pwshPath = $null
+            }
+        }
+        catch {
+            Write-Host "  ERROR: Failed to verify PowerShell version: $_" -ForegroundColor Red
+            Write-InstallLog -Message "Failed to verify PowerShell version: $_" -Level ERROR
+            $pwshPath = $null
+        }
+    }
+
+    # Method 3: Auto-detection failed - prompt user for path
+    if (-not $pwshPath) {
+        Write-Host ""
+        Write-Host "PowerShell 7.x was not detected automatically." -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "Please provide the full path to pwsh.exe, or press Enter to skip Evaluate-STIG integration." -ForegroundColor White
+        Write-Host ""
+
+        $maxAttempts = 3
+        $attempt = 0
+
+        while ($attempt -lt $maxAttempts -and -not $pwshPath) {
+            $attempt++
+            Write-Host "Attempt $attempt of $maxAttempts" -ForegroundColor Gray
+            $userPath = Read-Host "Path to pwsh.exe (or press Enter to skip)"
+
+            if ([string]::IsNullOrWhiteSpace($userPath)) {
+                Write-Host "Skipping Evaluate-STIG integration" -ForegroundColor Yellow
+                Write-InstallLog -Message "User skipped PowerShell 7 path entry - Evaluate-STIG integration disabled" -Level WARNING
+                return @{
+                    Available = $false
+                    Path = $null
+                    Version = $null
+                }
+            }
+
+            # Validate user-provided path
+            if (-not (Test-Path $userPath)) {
+                Write-Host "  ERROR: File not found: $userPath" -ForegroundColor Red
+                Write-InstallLog -Message "User-provided path not found: $userPath" -Level ERROR
+                continue
+            }
+
+            if ($userPath -notmatch '\.exe$') {
+                Write-Host "  ERROR: Path must point to pwsh.exe executable" -ForegroundColor Red
+                Write-InstallLog -Message "User-provided path is not an executable: $userPath" -Level ERROR
+                continue
+            }
+
+            # Verify version
+            try {
+                Write-Host "  Verifying PowerShell version..." -ForegroundColor Gray
+                $versionCheck = & $userPath -NoProfile -Command {
+                    @{
+                        Major = $PSVersionTable.PSVersion.Major
+                        Minor = $PSVersionTable.PSVersion.Minor
+                        Patch = $PSVersionTable.PSVersion.Patch
+                        Full = $PSVersionTable.PSVersion.ToString()
+                    }
+                }
+
+                if ($versionCheck.Major -ge 7) {
+                    Write-Host "  Version validated: PowerShell $($versionCheck.Full)" -ForegroundColor Green
+                    Write-InstallLog -Message "User-provided PowerShell validated: $userPath (v$($versionCheck.Full))" -Level SUCCESS
+
+                    return @{
+                        Available = $true
+                        Path = $userPath
+                        Version = $versionCheck.Full
+                        VersionMajor = $versionCheck.Major
+                    }
+                }
+                else {
+                    Write-Host "  ERROR: Found PowerShell $($versionCheck.Full) but version 7.x or higher is required" -ForegroundColor Red
+                    Write-InstallLog -Message "User-provided PowerShell version insufficient: $($versionCheck.Full)" -Level ERROR
+                }
+            }
+            catch {
+                Write-Host "  ERROR: Failed to execute or verify PowerShell: $_" -ForegroundColor Red
+                Write-InstallLog -Message "Failed to verify user-provided PowerShell: $_" -Level ERROR
+            }
+        }
+
+        # All attempts exhausted
+        Write-Host ""
+        Write-Host "Maximum attempts reached. Evaluate-STIG integration will be disabled." -ForegroundColor Yellow
+        Write-InstallLog -Message "PowerShell 7 validation failed after $maxAttempts attempts" -Level ERROR
+    }
+
+    return @{
+        Available = $false
+        Path = $null
+        Version = $null
+    }
+}
+
+function New-EvaluateSTIGTask {
+    <#
+    .SYNOPSIS
+        Creates a scheduled task for Evaluate-STIG STIG checklist generation
+
+    .DESCRIPTION
+        Creates a monthly scheduled task that runs Evaluate-STIG.ps1 against
+        collected Cisco tech-support files to generate STIG checklists.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PowerShell7Path,
+
+        [Parameter(Mandatory = $true)]
+        [string]$EvaluateSTIGScriptPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$InputDirectory,
+
+        [Parameter(Mandatory = $true)]
+        [string]$OutputDirectory,
+
+        [Parameter(Mandatory = $true)]
+        [PSCredential]$ServiceAccount,
+
+        [Parameter(Mandatory = $false)]
+        [int]$ScheduleDay = 1,
+
+        [Parameter(Mandatory = $false)]
+        [string]$ScheduleTime = '04:00',
+
+        [Parameter(Mandatory = $false)]
+        [string]$ScanType = 'Classified',
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$DeviceType = @('Router','Switch'),
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$OutputFormat = @('CKLB','CombinedCKLB','Summary','XCCDF'),
+
+        [Parameter(Mandatory = $false)]
+        [int]$ThrottleLimit = 10,
+
+        [Parameter(Mandatory = $false)]
+        [int]$VulnTimeout = 15,
+
+        [Parameter(Mandatory = $false)]
+        [int]$FileSearchTimeout = 240,
+
+        [Parameter(Mandatory = $false)]
+        [int]$PreviousToKeep = 3,
+
+        [Parameter(Mandatory = $false)]
+        [string]$Marking,
+
+        [Parameter(Mandatory = $false)]
+        [string]$TargetComments,
+
+        [Parameter(Mandatory = $false)]
+        [bool]$ApplyTattoo = $false,
+
+        [Parameter(Mandatory = $false)]
+        [bool]$AllowDeprecated = $false
+    )
+
+    try {
+        Write-Host "Creating Evaluate-STIG scheduled task..." -ForegroundColor Cyan
+        Write-InstallLog -Message "Creating Evaluate-STIG scheduled task" -Level INFO
+
+        # Build command-line arguments for Evaluate-STIG
+        $stigArguments = @()
+        $stigArguments += "-ExecutionPolicy Bypass"
+        $stigArguments += "-NoProfile"
+        $stigArguments += "-File `"$EvaluateSTIGScriptPath`""
+        $stigArguments += "-CiscoConfig `"$InputDirectory`""
+        $stigArguments += "-SelectDeviceType $($DeviceType -join ',')"
+        $stigArguments += "-ScanType $ScanType"
+        $stigArguments += "-VulnTimeout $VulnTimeout"
+        $stigArguments += "-FileSearchTimeout $FileSearchTimeout"
+
+        if ($ApplyTattoo) {
+            $stigArguments += "-ApplyTattoo"
+        }
+
+        $stigArguments += "-Output $($OutputFormat -join ',')"
+        $stigArguments += "-PreviousToKeep $PreviousToKeep"
+        $stigArguments += "-OutputPath `"$OutputDirectory`""
+
+        if ($AllowDeprecated) {
+            $stigArguments += "-AllowDeprecated"
+        }
+
+        $stigArguments += "-ThrottleLimit $ThrottleLimit"
+
+        if (-not [string]::IsNullOrWhiteSpace($Marking)) {
+            $stigArguments += "-Marking `"$Marking`""
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($TargetComments)) {
+            $stigArguments += "-TargetComments `"$TargetComments`""
+        }
+
+        $argumentString = $stigArguments -join " "
+
+        Write-InstallLog -Message "Task arguments: $argumentString" -Level DEBUG
+
+        # Create task action
+        $taskAction = New-ScheduledTaskAction `
+            -Execute $PowerShell7Path `
+            -Argument $argumentString `
+            -WorkingDirectory (Split-Path $EvaluateSTIGScriptPath -Parent)
+
+        # Create monthly trigger
+        $taskTrigger = New-ScheduledTaskTrigger `
+            -Monthly `
+            -DaysOfMonth $ScheduleDay `
+            -At $ScheduleTime
+
+        # Task settings
+        $taskSettings = New-ScheduledTaskSettings `
+            -AllowStartIfOnBatteries `
+            -DontStopIfGoingOnBatteries `
+            -StartWhenAvailable `
+            -RunOnlyIfNetworkAvailable `
+            -ExecutionTimeLimit (New-TimeSpan -Hours 4)
+
+        # Task principal (run as service account)
+        $taskPrincipal = New-ScheduledTaskPrincipal `
+            -UserId $ServiceAccount.UserName `
+            -LogonType Password `
+            -RunLevel Highest
+
+        # Task name
+        $taskName = "Cisco STIG Checklist Generator"
+
+        # Check if task already exists
+        $existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+        if ($existingTask) {
+            Write-Host "  Removing existing Evaluate-STIG task..." -ForegroundColor Yellow
+            Write-InstallLog -Message "Removing existing Evaluate-STIG task: $taskName" -Level WARNING
+            Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+        }
+
+        # Register the scheduled task
+        Write-Host "  Registering task: $taskName" -ForegroundColor Gray
+        $task = Register-ScheduledTask `
+            -TaskName $taskName `
+            -Action $taskAction `
+            -Trigger $taskTrigger `
+            -Settings $taskSettings `
+            -Principal $taskPrincipal `
+            -User $ServiceAccount.UserName `
+            -Password $ServiceAccount.GetNetworkCredential().Password `
+            -Force
+
+        if ($task) {
+            Write-Host "Evaluate-STIG task created successfully" -ForegroundColor Green
+            Write-InstallLog -Message "Evaluate-STIG scheduled task created: $taskName" -Level SUCCESS
+            Write-InstallLog -Message "Schedule: Monthly on day $ScheduleDay at $ScheduleTime" -Level INFO
+            Write-InstallLog -Message "Input: $InputDirectory" -Level INFO
+            Write-InstallLog -Message "Output: $OutputDirectory" -Level INFO
+
+            return $taskName
+        }
+        else {
+            throw "Failed to register Evaluate-STIG scheduled task"
+        }
+    }
+    catch {
+        Write-Host "ERROR: Failed to create Evaluate-STIG task: $_" -ForegroundColor Red
+        Write-InstallLog -Message "Failed to create Evaluate-STIG task: $_" -Level ERROR
+        throw
+    }
+}
+
+function Remove-EvaluateSTIGTask {
+    <#
+    .SYNOPSIS
+        Removes the Evaluate-STIG scheduled task
+    #>
+    [CmdletBinding()]
+    param()
+
+    try {
+        $taskName = "Cisco STIG Checklist Generator"
+        $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+
+        if ($task) {
+            Write-Host "  Removing Evaluate-STIG scheduled task..." -ForegroundColor Cyan
+            Write-InstallLog -Message "Removing Evaluate-STIG task: $taskName" -Level INFO
+
+            Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction Stop
+
+            Write-Host "  Evaluate-STIG task removed successfully" -ForegroundColor Green
+            Write-InstallLog -Message "Evaluate-STIG task removed: $taskName" -Level SUCCESS
+            return $true
+        }
+        else {
+            Write-InstallLog -Message "Evaluate-STIG task not found: $taskName" -Level DEBUG
+            return $false
+        }
+    }
+    catch {
+        Write-Host "  WARNING: Failed to remove Evaluate-STIG task: $_" -ForegroundColor Yellow
+        Write-InstallLog -Message "Failed to remove Evaluate-STIG task: $_" -Level WARNING
+        return $false
+    }
+}
+
+#endregion
+
 #region Uninstallation Functions
 function Uninstall-CiscoCollector {
     try {
@@ -1617,16 +2152,22 @@ function Uninstall-CiscoCollector {
         
         Write-Host ""
         Write-LogSection "REMOVING COMPONENTS"
-        
-        Write-InstallLog -Message "Removing scheduled task..." -Level INFO
+
+        Write-InstallLog -Message "Removing scheduled tasks..." -Level INFO
         if (Remove-CiscoCollectorTask) {
-            Write-InstallLog -Message "Scheduled task removed successfully" -Level SUCCESS
-            $componentsRemoved += "Scheduled Task"
+            Write-InstallLog -Message "Cisco collector task removed successfully" -Level SUCCESS
+            $componentsRemoved += "Cisco Collector Scheduled Task"
         }
         else {
-            Write-InstallLog -Message "No scheduled task found to remove" -Level INFO
+            Write-InstallLog -Message "No Cisco collector task found to remove" -Level INFO
         }
-        
+
+        # Remove Evaluate-STIG task if it exists
+        if (Remove-EvaluateSTIGTask) {
+            Write-InstallLog -Message "Evaluate-STIG task removed successfully" -Level SUCCESS
+            $componentsRemoved += "Evaluate-STIG Scheduled Task"
+        }
+
         Write-InstallLog -Message "Removing installation directory..." -Level INFO
         try {
             $pythonExe = "$InstallPath\$($script:PythonSubfolder)\python.exe"
