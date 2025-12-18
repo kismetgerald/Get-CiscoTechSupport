@@ -1601,12 +1601,17 @@ function Get-ExistingCollectorTasks {
     
     try {
         # Match both old and new naming patterns for backward compatibility
-        $allTasks = Get-ScheduledTask -ErrorAction SilentlyContinue | 
-                    Where-Object { 
+        $allTasks = @(Get-ScheduledTask -ErrorAction SilentlyContinue |
+                    Where-Object {
                         $_.TaskName -like "Cisco Tech-Support Collector*" -or
                         $_.TaskName -like "Cisco TechSupport Collector*"
-                    }
-        
+                    })
+
+        Write-InstallLog -Message "Found $($allTasks.Count) existing collector task(s)" -Level INFO -NoConsole
+        foreach ($task in $allTasks) {
+            Write-InstallLog -Message "  - Task: $($task.TaskName), State: $($task.State)" -Level INFO -NoConsole
+        }
+
         return $allTasks
     }
     catch {
