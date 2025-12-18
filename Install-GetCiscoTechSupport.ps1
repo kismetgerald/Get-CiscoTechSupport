@@ -2076,14 +2076,11 @@ function New-EvaluateSTIGTask {
             -RunOnlyIfNetworkAvailable `
             -ExecutionTimeLimit (New-TimeSpan -Hours 4)
 
-        # Task principal (run as service account)
-        $taskPrincipal = New-ScheduledTaskPrincipal `
-            -UserId $ServiceAccount.UserName `
-            -LogonType Password `
-            -RunLevel Highest
-
         # Task name
         $taskName = "Cisco STIG Checklist Generator"
+
+        # Task description
+        $taskDescription = "Automated STIG checklist generation from Cisco tech-support files. Runs monthly on day $ScheduleDay at $ScheduleTime."
 
         # Check if task already exists
         $existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
@@ -2097,12 +2094,13 @@ function New-EvaluateSTIGTask {
         Write-Host "  Registering task: $taskName" -ForegroundColor Gray
         $task = Register-ScheduledTask `
             -TaskName $taskName `
+            -Description $taskDescription `
             -Action $taskAction `
             -Trigger $taskTrigger `
             -Settings $taskSettings `
-            -Principal $taskPrincipal `
             -User $ServiceAccount.UserName `
             -Password $ServiceAccount.GetNetworkCredential().Password `
+            -RunLevel Highest `
             -Force
 
         if ($task) {
