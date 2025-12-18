@@ -1464,17 +1464,20 @@ function Remove-CiscoCollectorTask {
         }
         
         # Single task found - remove without prompting during uninstall
+        Write-InstallLog -Message "Checking task count: $($existingTasks.Count), Type: $($existingTasks.GetType().Name)" -Level INFO -NoConsole
+
         if ($existingTasks.Count -eq 1) {
             $taskToRemove = $existingTasks[0]
             Write-Host "`nFound scheduled task: " -NoNewline -ForegroundColor Cyan
             Write-Host "$($taskToRemove.TaskName)" -ForegroundColor White
-            
+
             Unregister-ScheduledTask -TaskName $taskToRemove.TaskName -Confirm:$false -ErrorAction Stop
             Write-InstallLog -Message "Removed scheduled task: $($taskToRemove.TaskName)" -Level SUCCESS
             return $true
         }
         else {
             # Multiple tasks - let user choose
+            Write-InstallLog -Message "Entering multiple task selection (Count: $($existingTasks.Count))" -Level INFO -NoConsole
             Write-Host "`nFound multiple Cisco Tech-Support Collector tasks:" -ForegroundColor Yellow
             Write-Host ""
             
