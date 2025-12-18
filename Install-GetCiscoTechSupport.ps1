@@ -2107,20 +2107,36 @@ function New-EvaluateSTIGTask {
             # Modify the trigger to be monthly using COM object
             # This is necessary because New-ScheduledTaskTrigger doesn't support monthly scheduling
             try {
-                Write-InstallLog -Message "Modifying trigger to monthly schedule" -Level INFO -NoConsole
+                Write-InstallLog -Message "Modifying trigger to monthly schedule (day $ScheduleDay)" -Level INFO -NoConsole
+
+                # Use COM object to access and modify the task
                 $taskService = New-Object -ComObject Schedule.Service
                 $taskService.Connect()
                 $taskFolder = $taskService.GetFolder("\")
-                $taskDefinition = $taskFolder.GetTask($taskName).Definition
+                $taskObj = $taskFolder.GetTask($taskName)
+                $taskDefinition = $taskObj.Definition
 
-                # Get the first trigger and modify it to monthly
-                $trigger = $taskDefinition.Triggers.Item(1)
-                $trigger.Type = 4  # Monthly trigger type
-                $trigger.DaysOfMonth = [Math]::Pow(2, $ScheduleDay - 1)  # Bit mask for specific day
-                $trigger.MonthsOfYear = 0xFFF  # All months (bit mask)
-                $trigger.StartBoundary = $trigger.StartBoundary  # Preserve start time
+                # Remove the existing trigger
+                $taskDefinition.Triggers.Clear()
 
-                # Update the task with modified trigger
+                # Create a new monthly trigger
+                $TASK_TRIGGER_MONTHLYDATE = 4
+                $newTrigger = $taskDefinition.Triggers.Create($TASK_TRIGGER_MONTHLYDATE)
+
+                # Set the start boundary (date/time when trigger becomes active)
+                $startTime = Get-Date -Hour ([int]$ScheduleTime.Split(':')[0]) -Minute ([int]$ScheduleTime.Split(':')[1]) -Second 0
+                $newTrigger.StartBoundary = $startTime.ToString("yyyy-MM-dd'T'HH:mm:ss")
+
+                # Set to run on specific day of month (bit mask: day 1 = 1, day 2 = 2, day 3 = 4, etc.)
+                $newTrigger.DaysOfMonth = [Math]::Pow(2, $ScheduleDay - 1)
+
+                # Set to run every month (bit mask: 0xFFF = all 12 months)
+                $newTrigger.MonthsOfYear = 0xFFF
+
+                # Enable the trigger
+                $newTrigger.Enabled = $true
+
+                # Save the modified task
                 $taskFolder.RegisterTaskDefinition(
                     $taskName,
                     $taskDefinition,
@@ -2130,9 +2146,11 @@ function New-EvaluateSTIGTask {
                     1   # TASK_LOGON_PASSWORD
                 ) | Out-Null
 
-                Write-InstallLog -Message "Monthly trigger configured successfully" -Level SUCCESS -NoConsole
+                Write-Host "  Monthly schedule configured: Day $ScheduleDay at $ScheduleTime" -ForegroundColor Gray
+                Write-InstallLog -Message "Monthly trigger configured successfully: Day $ScheduleDay at $ScheduleTime" -Level SUCCESS
             }
             catch {
+                Write-Host "  WARNING: Failed to set monthly schedule: $_" -ForegroundColor Yellow
                 Write-InstallLog -Message "Warning: Failed to modify trigger to monthly: $_" -Level WARNING
                 Write-InstallLog -Message "Task created with daily trigger - may need manual adjustment" -Level WARNING
             }
