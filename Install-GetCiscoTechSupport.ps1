@@ -553,43 +553,57 @@ function Expand-ArchiveCompat {
         [string]$Path,
         [string]$DestinationPath
     )
-    
+
     Write-InstallLog -Message "Extracting archive: $Path" -Level INFO
     Write-InstallLog -Message "Destination: $DestinationPath" -Level INFO
-    
-    # Try .NET ZipFile first (fastest method)
+
+    # Check if .NET Framework is available for fast extraction
+    $dotNetAvailable = $false
     try {
         Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
-        Write-InstallLog -Message "Using .NET ZipFile for extraction (fast method)" -Level INFO
-        
-        # Check PowerShell version to determine extraction method
-        $psVersion = $PSVersionTable.PSVersion.Major
-        
-        Write-Host "Extracting archive (this may take a moment)..." -ForegroundColor Cyan -NoNewline
-        
-        if ($psVersion -ge 7) {
-            # PowerShell 7+ supports overwrite parameter directly
-            [System.IO.Compression.ZipFile]::ExtractToDirectory($Path, $DestinationPath, $true)
-            Write-Host " Done!" -ForegroundColor Green
-            Write-InstallLog -Message "Archive extracted successfully (PS7+ with overwrite)" -Level SUCCESS
-        }
-        else {
-            # PowerShell 5.1: Check if destination exists and handle manually
-            if (Test-Path $DestinationPath) {
-                Write-InstallLog -Message "Destination exists, removing before extraction" -Level INFO -NoConsole
-                Remove-Item -Path $DestinationPath -Recurse -Force -ErrorAction Stop
-            }
-            
-            [System.IO.Compression.ZipFile]::ExtractToDirectory($Path, $DestinationPath)
-            Write-Host " Done!" -ForegroundColor Green
-            Write-InstallLog -Message "Archive extracted successfully (.NET ZipFile)" -Level SUCCESS
-        }
-        return
+        $dotNetAvailable = $true
+        Write-InstallLog -Message ".NET Framework System.IO.Compression.FileSystem available" -Level INFO -NoConsole
     }
     catch {
-        Write-Host " Failed!" -ForegroundColor Red
-        Write-InstallLog -Message ".NET ZipFile extraction failed: $_" -Level WARNING
-        Write-InstallLog -Message "Falling back to Expand-Archive cmdlet" -Level INFO
+        Write-Host "NOTE: .NET Framework compression not available - using PowerShell cmdlet" -ForegroundColor Yellow
+        Write-InstallLog -Message ".NET Framework not available for compression: $_" -Level INFO
+        Write-InstallLog -Message "Using Expand-Archive cmdlet (slower but compatible)" -Level INFO
+    }
+
+    # Use .NET method if available (fastest)
+    if ($dotNetAvailable) {
+        try {
+            Write-InstallLog -Message "Using .NET ZipFile for extraction (fast method)" -Level INFO
+
+            # Check PowerShell version to determine extraction method
+            $psVersion = $PSVersionTable.PSVersion.Major
+
+            Write-Host "Extracting archive (this may take a moment)..." -ForegroundColor Cyan -NoNewline
+
+            if ($psVersion -ge 7) {
+                # PowerShell 7+ supports overwrite parameter directly
+                [System.IO.Compression.ZipFile]::ExtractToDirectory($Path, $DestinationPath, $true)
+                Write-Host " Done!" -ForegroundColor Green
+                Write-InstallLog -Message "Archive extracted successfully (PS7+ with overwrite)" -Level SUCCESS
+            }
+            else {
+                # PowerShell 5.1: Check if destination exists and handle manually
+                if (Test-Path $DestinationPath) {
+                    Write-InstallLog -Message "Destination exists, removing before extraction" -Level INFO -NoConsole
+                    Remove-Item -Path $DestinationPath -Recurse -Force -ErrorAction Stop
+                }
+
+                [System.IO.Compression.ZipFile]::ExtractToDirectory($Path, $DestinationPath)
+                Write-Host " Done!" -ForegroundColor Green
+                Write-InstallLog -Message "Archive extracted successfully (.NET ZipFile)" -Level SUCCESS
+            }
+            return
+        }
+        catch {
+            Write-Host " Failed!" -ForegroundColor Red
+            Write-InstallLog -Message ".NET ZipFile extraction failed: $_" -Level WARNING
+            Write-InstallLog -Message "Falling back to Expand-Archive cmdlet" -Level INFO
+        }
     }
     
     # Fallback to Expand-Archive (slower but more compatible)
@@ -2294,7 +2308,43 @@ function Uninstall-CiscoCollector {
                     Start-Sleep -Seconds 2
                 }
             }
-            
+
+            # Handle credential files with restricted ACLs
+            $credentialFiles = @(
+                "$InstallPath\cisco_creds.xml",
+                "$InstallPath\snmp_creds.xml"
+            )
+
+            foreach ($credFile in $credentialFiles) {
+                if (Test-Path $credFile) {
+                    try {
+                        Write-InstallLog -Message "Removing restricted credential file: $credFile" -Level INFO
+
+                        # Take ownership of the file
+                        $acl = Get-Acl $credFile
+                        $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+                        $acl.SetOwner([System.Security.Principal.NTAccount]$currentUser)
+                        Set-Acl -Path $credFile -AclObject $acl
+
+                        # Grant full control to current user
+                        $acl = Get-Acl $credFile
+                        $permission = [System.Security.Principal.NTAccount]$currentUser, "FullControl", "Allow"
+                        $accessRule = New-Object System.Security.AccessControl.FileSystemAccessRule $permission
+                        $acl.SetAccessRule($accessRule)
+                        Set-Acl -Path $credFile -AclObject $acl
+
+                        # Now remove the file
+                        Remove-Item -Path $credFile -Force -ErrorAction Stop
+                        Write-InstallLog -Message "Credential file removed: $credFile" -Level SUCCESS
+                    }
+                    catch {
+                        Write-InstallLog -Message "Failed to remove credential file $credFile : $_" -Level WARNING
+                        Write-Host "  Warning: Could not remove credential file: $credFile" -ForegroundColor Yellow
+                        Write-Host "  You may need to manually delete this file." -ForegroundColor Yellow
+                    }
+                }
+            }
+
             Remove-Item -Path $InstallPath -Recurse -Force -ErrorAction Stop
             Write-InstallLog -Message "Installation directory removed successfully" -Level SUCCESS
             $componentsRemoved += "Installation Directory"
