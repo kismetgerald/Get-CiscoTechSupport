@@ -580,27 +580,54 @@ function Expand-ArchiveCompat {
 
             Write-Host "Extracting archive (this may take a moment)..." -ForegroundColor Cyan -NoNewline
 
-            if ($psVersion -ge 7) {
-                # PowerShell 7+ supports overwrite parameter directly
-                [System.IO.Compression.ZipFile]::ExtractToDirectory($Path, $DestinationPath, $true)
-                Write-Host " Done!" -ForegroundColor Green
-                Write-InstallLog -Message "Archive extracted successfully (PS7+ with overwrite)" -Level SUCCESS
+            # Run extraction as a job so we can show progress
+            $extractJob = Start-Job -ScriptBlock {
+                param($psVer, $zipPath, $destPath)
+
+                Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+                if ($psVer -ge 7) {
+                    [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $destPath, $true)
+                }
+                else {
+                    if (Test-Path $destPath) {
+                        Remove-Item -Path $destPath -Recurse -Force -ErrorAction Stop
+                    }
+                    [System.IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $destPath)
+                }
+            } -ArgumentList $psVersion, $Path, $DestinationPath
+
+            # Show animated spinner while waiting
+            $spinChars = @('|', '/', '-', '\')
+            $spinIndex = 0
+            while ($extractJob.State -eq 'Running') {
+                Write-Host "`b$($spinChars[$spinIndex])" -NoNewline -ForegroundColor Cyan
+                $spinIndex = ($spinIndex + 1) % $spinChars.Length
+                Start-Sleep -Milliseconds 100
+            }
+
+            # Check if job completed successfully
+            $extractJob | Wait-Job | Out-Null
+            if ($extractJob.State -eq 'Completed') {
+                Receive-Job -Job $extractJob -AutoRemoveJob | Out-Null
+                Write-Host "`bDone!" -ForegroundColor Green
+
+                if ($psVersion -ge 7) {
+                    Write-InstallLog -Message "Archive extracted successfully (PS7+ with overwrite)" -Level SUCCESS
+                }
+                else {
+                    Write-InstallLog -Message "Archive extracted successfully (.NET ZipFile)" -Level SUCCESS
+                }
             }
             else {
-                # PowerShell 5.1: Check if destination exists and handle manually
-                if (Test-Path $DestinationPath) {
-                    Write-InstallLog -Message "Destination exists, removing before extraction" -Level INFO -NoConsole
-                    Remove-Item -Path $DestinationPath -Recurse -Force -ErrorAction Stop
-                }
-
-                [System.IO.Compression.ZipFile]::ExtractToDirectory($Path, $DestinationPath)
-                Write-Host " Done!" -ForegroundColor Green
-                Write-InstallLog -Message "Archive extracted successfully (.NET ZipFile)" -Level SUCCESS
+                $jobError = Receive-Job -Job $extractJob -AutoRemoveJob
+                Remove-Job -Job $extractJob -Force -ErrorAction SilentlyContinue
+                throw $jobError
             }
             return
         }
         catch {
-            Write-Host " Failed!" -ForegroundColor Red
+            Write-Host "`bFailed!" -ForegroundColor Red
             Write-InstallLog -Message ".NET ZipFile extraction failed: $_" -Level WARNING
             Write-InstallLog -Message "Falling back to Expand-Archive cmdlet" -Level INFO
         }
@@ -1156,14 +1183,29 @@ Read-Host
     }
     
     Start-Sleep -Seconds 2
-    
+
     $credFile = Join-Path $InstallPath ".cisco_credentials"
     Write-Host ""
-    Write-Host "Verifying credential file..." -ForegroundColor Cyan
-    
+    Write-Host "Verifying credential file..." -ForegroundColor Cyan -NoNewline
+
+    # Show spinner while checking file
+    $spinChars = @('|', '/', '-', '\')
+    $spinIndex = 0
+    $verifyAttempts = 0
+    $maxAttempts = 10  # 1 second total (10 * 100ms)
+
+    while ($verifyAttempts -lt $maxAttempts) {
+        Write-Host "`b$($spinChars[$spinIndex])" -NoNewline -ForegroundColor Cyan
+        $spinIndex = ($spinIndex + 1) % $spinChars.Length
+        Start-Sleep -Milliseconds 100
+        $verifyAttempts++
+    }
+    Write-Host "`b " -NoNewline  # Clear the spinner
+
     if (Test-Path $credFile) {
         $fileInfo = Get-Item $credFile
         if ($fileInfo.Length -gt 0) {
+            Write-Host "Done!" -ForegroundColor Green
             Write-Host "SUCCESS: Credential file created and verified" -ForegroundColor Green
             Write-Host "  Location: $credFile" -ForegroundColor Gray
             Write-Host "  Size: $($fileInfo.Length) bytes" -ForegroundColor Gray
@@ -1172,12 +1214,88 @@ Read-Host
             
             # Secure the credential file
             Write-Host ""
-            Write-Host "Securing credential file..." -ForegroundColor Cyan
-            $secureResult = Set-CredentialFilePermissions -FilePath $credFile -ServiceAccountName $ServiceAccountCred.UserName
-            if ($secureResult) {
+            Write-Host "Securing credential file..." -ForegroundColor Cyan -NoNewline
+
+            # Run ACL operations as a job so we can show progress
+            $secureJob = Start-Job -ScriptBlock {
+                param($credPath, $serviceAccount)
+
+                try {
+                    if (-not (Test-Path $credPath)) {
+                        return @{ Success = $false; Error = "File not found" }
+                    }
+
+                    # Set the hidden attribute
+                    $file = Get-Item $credPath -Force
+                    $file.Attributes = $file.Attributes -bor [System.IO.FileAttributes]::Hidden
+
+                    # Get the current ACL
+                    $acl = Get-Acl -Path $credPath
+
+                    # Disable inheritance and remove inherited permissions
+                    $acl.SetAccessRuleProtection($true, $false)
+
+                    # Remove all existing access rules
+                    $acl.Access | ForEach-Object { $acl.RemoveAccessRule($_) | Out-Null }
+
+                    # Create access rule for service account (Read, Write)
+                    $serviceAccountIdentity = New-Object System.Security.Principal.NTAccount($serviceAccount)
+                    $fileSystemRights = [System.Security.AccessControl.FileSystemRights]::Read -bor `
+                                       [System.Security.AccessControl.FileSystemRights]::Write
+                    $accessType = [System.Security.AccessControl.AccessControlType]::Allow
+                    $inheritanceFlags = [System.Security.AccessControl.InheritanceFlags]::None
+                    $propagationFlags = [System.Security.AccessControl.PropagationFlags]::None
+
+                    $accessRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+                        $serviceAccountIdentity,
+                        $fileSystemRights,
+                        $inheritanceFlags,
+                        $propagationFlags,
+                        $accessType
+                    )
+
+                    $acl.AddAccessRule($accessRule)
+
+                    # Apply the modified ACL
+                    Set-Acl -Path $credPath -AclObject $acl
+
+                    # Verify the permissions
+                    $verifyAcl = Get-Acl -Path $credPath
+                    $serviceAccountAccess = $verifyAcl.Access | Where-Object {
+                        $_.IdentityReference.Value -eq $serviceAccount -or
+                        $_.IdentityReference.Value -like "*\$serviceAccount" -or
+                        $_.IdentityReference.Value -like "$serviceAccount"
+                    }
+
+                    if ($serviceAccountAccess) {
+                        return @{ Success = $true }
+                    }
+                    else {
+                        return @{ Success = $false; Error = "Could not verify permissions" }
+                    }
+                }
+                catch {
+                    return @{ Success = $false; Error = $_.Exception.Message }
+                }
+            } -ArgumentList $credFile, $ServiceAccountCred.UserName
+
+            # Show animated spinner while waiting
+            $spinChars = @('|', '/', '-', '\')
+            $spinIndex = 0
+            while ($secureJob.State -eq 'Running') {
+                Write-Host "`b$($spinChars[$spinIndex])" -NoNewline -ForegroundColor Cyan
+                $spinIndex = ($spinIndex + 1) % $spinChars.Length
+                Start-Sleep -Milliseconds 100
+            }
+
+            $secureJobResult = Receive-Job -Job $secureJob -Wait -AutoRemoveJob
+
+            if ($secureJobResult.Success) {
+                Write-Host "`bDone!" -ForegroundColor Green
                 Write-Host "Credential file secured successfully" -ForegroundColor Green
             }
             else {
+                Write-Host "`bFailed!" -ForegroundColor Yellow
                 Write-Host "WARNING: Could not fully secure credential file" -ForegroundColor Yellow
                 Write-Host "Manual verification recommended" -ForegroundColor Yellow
             }
