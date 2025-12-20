@@ -2570,25 +2570,69 @@ function Install-CiscoCollector {
                 }
             }
 
-            # Use takeown and icacls on entire directory for reliable removal
+            # Try direct directory removal first (fast path)
             try {
-                $takeownOutput = & takeown.exe /F $InstallPath /R /A /D Y 2>&1
-                Write-InstallLog -Message "Directory takeown completed" -Level INFO -NoConsole
-
-                $icaclsOutput = & icacls.exe $InstallPath /reset /T /C /Q 2>&1
-                Write-InstallLog -Message "Directory ACL reset completed" -Level INFO -NoConsole
-
-                $icaclsOutput = & icacls.exe $InstallPath /grant "Administrators:(OI)(CI)F" /T /C /Q 2>&1
-                Write-InstallLog -Message "Directory permissions granted" -Level INFO -NoConsole
-
-                Start-Sleep -Milliseconds 1000
+                Remove-Item -Path $InstallPath -Recurse -Force -ErrorAction Stop
+                Write-InstallLog -Message "Existing installation removed" -Level SUCCESS
             }
             catch {
-                Write-InstallLog -Message "ACL modification warning: $_" -Level WARNING -NoConsole
-            }
+                # If direct removal fails, use aggressive takeown/icacls approach (slow but thorough)
+                Write-InstallLog -Message "Direct removal failed, using takeown/icacls on directory tree" -Level INFO -NoConsole
+                Write-Host "Resetting directory permissions (this may take a moment)..." -ForegroundColor Yellow -NoNewline
 
-            Remove-Item -Path $InstallPath -Recurse -Force
-            Write-InstallLog -Message "Existing installation removed" -Level SUCCESS
+                try {
+                    # Run takeown as a job so we can show progress
+                    $takeownJob = Start-Job -ScriptBlock {
+                        param($path)
+                        & takeown.exe /F $path /R /A /D Y 2>&1
+                    } -ArgumentList $InstallPath
+
+                    # Show animated dots while waiting
+                    $spinChars = @('|', '/', '-', '\')
+                    $spinIndex = 0
+                    while ($takeownJob.State -eq 'Running') {
+                        Write-Host "`b$($spinChars[$spinIndex])" -NoNewline -ForegroundColor Cyan
+                        $spinIndex = ($spinIndex + 1) % $spinChars.Length
+                        Start-Sleep -Milliseconds 100
+                    }
+                    Write-Host "`b " -NoNewline  # Clear the spinner
+
+                    $takeownOutput = Receive-Job -Job $takeownJob -Wait -AutoRemoveJob
+                    Write-InstallLog -Message "Directory takeown completed" -Level INFO -NoConsole
+
+                    # Run icacls reset with progress indicator
+                    $icaclsJob = Start-Job -ScriptBlock {
+                        param($path)
+                        & icacls.exe $path /reset /T /C /Q 2>&1
+                    } -ArgumentList $InstallPath
+
+                    $spinIndex = 0
+                    while ($icaclsJob.State -eq 'Running') {
+                        Write-Host "`b$($spinChars[$spinIndex])" -NoNewline -ForegroundColor Cyan
+                        $spinIndex = ($spinIndex + 1) % $spinChars.Length
+                        Start-Sleep -Milliseconds 100
+                    }
+                    Write-Host "`b " -NoNewline  # Clear the spinner
+
+                    $icaclsOutput = Receive-Job -Job $icaclsJob -Wait -AutoRemoveJob
+                    Write-InstallLog -Message "Directory ACL reset completed" -Level INFO -NoConsole
+
+                    # Run icacls grant (usually fast, no progress needed)
+                    $icaclsOutput = & icacls.exe $InstallPath /grant "Administrators:(OI)(CI)F" /T /C /Q 2>&1
+                    Write-InstallLog -Message "Directory permissions granted" -Level INFO -NoConsole
+
+                    Write-Host "Done!" -ForegroundColor Green
+                    Start-Sleep -Milliseconds 1000
+
+                    Remove-Item -Path $InstallPath -Recurse -Force -ErrorAction Stop
+                    Write-InstallLog -Message "Existing installation removed (after ACL reset)" -Level SUCCESS
+                }
+                catch {
+                    Write-Host "" # New line after progress indicator
+                    Write-InstallLog -Message "Failed to remove installation directory: $_" -Level ERROR
+                    throw "Could not remove existing installation directory"
+                }
+            }
         }
         
         New-Item -Path $InstallPath -ItemType Directory -Force | Out-Null
