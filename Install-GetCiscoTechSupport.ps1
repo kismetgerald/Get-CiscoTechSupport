@@ -827,14 +827,22 @@ function Set-CredentialFilePermissions {
         
         # Verify the permissions
         $verifyAcl = Get-Acl -Path $FilePath
-        $serviceAccountAccess = $verifyAcl.Access | Where-Object { $_.IdentityReference -eq $ServiceAccountName }
-        
+        # Convert IdentityReference to string for comparison (handles different formats like DOMAIN\user vs user)
+        $serviceAccountAccess = $verifyAcl.Access | Where-Object {
+            $_.IdentityReference.Value -eq $ServiceAccountName -or
+            $_.IdentityReference.Value -like "*\$ServiceAccountName" -or
+            $_.IdentityReference.Value -like "$ServiceAccountName"
+        }
+
         if ($serviceAccountAccess) {
             Write-InstallLog -Message "Verified: Service account has access to credential file" -Level SUCCESS
+            Write-InstallLog -Message "  Identity: $($serviceAccountAccess.IdentityReference.Value)" -Level INFO -NoConsole
             return $true
         }
         else {
             Write-InstallLog -Message "WARNING: Could not verify service account permissions" -Level WARNING
+            Write-InstallLog -Message "  Expected account: $ServiceAccountName" -Level WARNING -NoConsole
+            Write-InstallLog -Message "  Found ACEs: $($verifyAcl.Access | ForEach-Object { $_.IdentityReference.Value } | Join-String -Separator ', ')" -Level WARNING -NoConsole
             return $false
         }
     }
