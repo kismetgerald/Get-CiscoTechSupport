@@ -1977,6 +1977,57 @@ Examples:
     print(f"Offline hosts log: {collector.offline_log}")
     print("="*60)
 
+    # Send email notification if configured
+    if args.send_email:
+        try:
+            collector.logger.info("Sending email notification...")
+            print("\nSending email notification...")
+
+            # Load SMTP credentials if credential file specified
+            smtp_username, smtp_password = None, None
+            if args.smtp_cred_file:
+                smtp_username, smtp_password = load_smtp_credentials(args.smtp_cred_file)
+
+            # Build SMTP configuration
+            smtp_config = {
+                'server': args.smtp_server,
+                'port': args.smtp_port,
+                'use_ssl': args.smtp_use_ssl,
+                'use_starttls': args.smtp_use_starttls,
+                'from': args.email_from,
+                'to': args.email_to.split(',') if args.email_to else [],
+                'subject': args.email_subject,
+                'username': smtp_username or args.smtp_username,
+                'password': smtp_password or args.smtp_password,
+            }
+
+            # Determine collection mode
+            collection_mode = 'Discovery' if args.discover else 'DeviceList'
+
+            # Build summary with results
+            summary = build_collection_summary(
+                collector.results,
+                collector.start_time,
+                datetime.now(timezone.utc),
+                collection_mode,
+                collector.output_dir
+            )
+
+            # Send email notification
+            email_sent = send_email_notification(smtp_config, summary, collector.results)
+
+            if email_sent:
+                collector.logger.info("Email notification sent successfully")
+                print("Email notification sent successfully")
+            else:
+                collector.logger.warning("Email notification failed (see log for details)")
+                print("Warning: Email notification failed (see log for details)")
+
+        except Exception as e:
+            collector.logger.error(f"Email notification failed: {e}")
+            print(f"Warning: Email notification failed: {e}")
+            # Don't fail entire script if email fails
+
 # endregion
 
 # region Script Entry Point
