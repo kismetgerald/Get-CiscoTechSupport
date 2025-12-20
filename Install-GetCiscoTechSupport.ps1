@@ -2377,23 +2377,53 @@ function Uninstall-CiscoCollector {
             # Reset permissions on entire directory tree to ensure removal succeeds
             try {
                 Write-InstallLog -Message "Resetting permissions on installation directory" -Level INFO -NoConsole
+                Write-Host "Resetting directory permissions (this may take a moment)..." -ForegroundColor Yellow -NoNewline
 
-                # Use takeown on entire directory tree
-                Write-InstallLog -Message "Taking ownership of directory tree with takeown" -Level INFO -NoConsole
-                $takeownOutput = & takeown.exe /F $InstallPath /R /A /D Y 2>&1
-                Write-InstallLog -Message "takeown output: $takeownOutput" -Level INFO -NoConsole
+                # Run takeown as a job so we can show progress
+                $takeownJob = Start-Job -ScriptBlock {
+                    param($path)
+                    & takeown.exe /F $path /R /A /D Y 2>&1
+                } -ArgumentList $InstallPath
 
-                # Reset permissions recursively with icacls
-                $icaclsOutput = & icacls.exe $InstallPath /reset /T /C /Q 2>&1
-                Write-InstallLog -Message "icacls reset output: $icaclsOutput" -Level INFO -NoConsole
+                # Show animated spinner while waiting
+                $spinChars = @('|', '/', '-', '\')
+                $spinIndex = 0
+                while ($takeownJob.State -eq 'Running') {
+                    Write-Host "`b$($spinChars[$spinIndex])" -NoNewline -ForegroundColor Cyan
+                    $spinIndex = ($spinIndex + 1) % $spinChars.Length
+                    Start-Sleep -Milliseconds 100
+                }
+                Write-Host "`b " -NoNewline  # Clear the spinner
 
-                # Grant full control to Administrators group recursively
+                $takeownOutput = Receive-Job -Job $takeownJob -Wait -AutoRemoveJob
+                Write-InstallLog -Message "Directory takeown completed" -Level INFO -NoConsole
+
+                # Run icacls reset with progress indicator
+                $icaclsJob = Start-Job -ScriptBlock {
+                    param($path)
+                    & icacls.exe $path /reset /T /C /Q 2>&1
+                } -ArgumentList $InstallPath
+
+                $spinIndex = 0
+                while ($icaclsJob.State -eq 'Running') {
+                    Write-Host "`b$($spinChars[$spinIndex])" -NoNewline -ForegroundColor Cyan
+                    $spinIndex = ($spinIndex + 1) % $spinChars.Length
+                    Start-Sleep -Milliseconds 100
+                }
+                Write-Host "`b " -NoNewline  # Clear the spinner
+
+                $icaclsOutput = Receive-Job -Job $icaclsJob -Wait -AutoRemoveJob
+                Write-InstallLog -Message "Directory ACL reset completed" -Level INFO -NoConsole
+
+                # Run icacls grant (usually fast, no progress needed)
                 $icaclsOutput = & icacls.exe $InstallPath /grant "Administrators:(OI)(CI)F" /T /C /Q 2>&1
-                Write-InstallLog -Message "icacls grant output: $icaclsOutput" -Level INFO -NoConsole
+                Write-InstallLog -Message "Directory permissions granted" -Level INFO -NoConsole
 
+                Write-Host "Done!" -ForegroundColor Green
                 Start-Sleep -Milliseconds 1000  # Longer pause for full ACL propagation
             }
             catch {
+                Write-Host "" # New line after progress indicator
                 Write-InstallLog -Message "Failed to reset permissions: $_" -Level WARNING -NoConsole
             }
 
