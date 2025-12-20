@@ -609,7 +609,7 @@ function Expand-ArchiveCompat {
             # Check if job completed successfully
             $extractJob | Wait-Job | Out-Null
             if ($extractJob.State -eq 'Completed') {
-                Receive-Job -Job $extractJob -AutoRemoveJob | Out-Null
+                Receive-Job -Job $extractJob -Wait -AutoRemoveJob | Out-Null
                 Write-Host "`bDone!" -ForegroundColor Green
 
                 if ($psVersion -ge 7) {
@@ -620,7 +620,7 @@ function Expand-ArchiveCompat {
                 }
             }
             else {
-                $jobError = Receive-Job -Job $extractJob -AutoRemoveJob
+                $jobError = Receive-Job -Job $extractJob -Wait -AutoRemoveJob
                 Remove-Job -Job $extractJob -Force -ErrorAction SilentlyContinue
                 throw $jobError
             }
