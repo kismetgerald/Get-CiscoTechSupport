@@ -1219,6 +1219,8 @@ Read-Host
 
             # Run ACL operations as a job so we can show progress
             $secureJob = Start-Job -ScriptBlock {
+                # PSScriptAnalyzer false positive: $credPath is a file path, not a password
+                [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
                 param($credPath, $serviceAccount)
 
                 try {
@@ -1559,6 +1561,8 @@ if (Test-Path '$credFile') {
 
             # Run ACL operations as a job so we can show progress
             $secureJob = Start-Job -ScriptBlock {
+                # PSScriptAnalyzer false positive: $credPath is a file path, not a password
+                [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
                 param($credPath, $serviceAccount)
 
                 try {
@@ -3452,7 +3456,6 @@ function Install-CiscoCollector {
         }
 
         # Email Notification Configuration
-        $enableEmail = $false
         $emailConfigured = $false
         $smtpServer = $null
         $smtpPort = 587
@@ -3481,8 +3484,6 @@ function Install-CiscoCollector {
             if ([string]::IsNullOrWhiteSpace($response)) { $response = 'no' }
 
             if ($response -match '^y(es)?$|^Y(ES)?$') {
-                $enableEmail = $true
-
                 # SMTP Server Configuration
                 Write-Host ""
                 Write-Host "SMTP Server Configuration" -ForegroundColor Cyan
@@ -3589,7 +3590,7 @@ function Install-CiscoCollector {
                     if ([string]::IsNullOrWhiteSpace($smtpUsername)) {
                         Write-Host "WARNING: SMTP username is required for authentication" -ForegroundColor Yellow
                         Write-Host "Email notifications will be disabled" -ForegroundColor Yellow
-                        $enableEmail = $false
+                        # Email will remain unconfigured (emailConfigured stays false)
                     }
                     else {
                         $smtpPassword = Read-Host "SMTP password" -AsSecureString
@@ -3613,7 +3614,7 @@ function Install-CiscoCollector {
                             Write-Host "You can manually configure SMTP credentials later by running:" -ForegroundColor White
                             Write-Host "  Start-SMTPCredentialSetup function from this script" -ForegroundColor Gray
                             Write-Host ""
-                            $enableEmail = $false
+                            # Email will remain unconfigured (emailConfigured stays false)
                         }
                         else {
                             $emailConfigured = $true
