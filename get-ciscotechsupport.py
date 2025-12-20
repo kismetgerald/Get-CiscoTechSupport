@@ -204,7 +204,7 @@ import os
 import sys
 import platform
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 import ipaddress
@@ -213,6 +213,11 @@ import re
 import getpass
 import json
 from base64 import b64encode, b64decode
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
 
 # endregion
 
@@ -271,6 +276,14 @@ try:
 except ImportError as e:
     CRYPTO_AVAILABLE = False
     CRYPTO_IMPORT_ERROR = str(e)
+
+# Try to import jinja2 for email templating
+try:
+    from jinja2 import Environment, FileSystemLoader, select_autoescape
+    JINJA2_AVAILABLE = True
+except ImportError as e:
+    JINJA2_AVAILABLE = False
+    JINJA2_IMPORT_ERROR = str(e)
 
 # Detect OS
 IS_WINDOWS = platform.system() == 'Windows'
@@ -1217,6 +1230,458 @@ def load_devices_from_file(filepath):
         sys.exit(1)
     
     return devices
+
+# endregion
+
+# region Email Notification Functions
+
+def collect_audit_metadata(start_time, end_time):
+    """
+    Collect comprehensive audit metadata for DoD compliance
+
+    Args:
+        start_time: Collection start datetime
+        end_time: Collection end datetime
+
+    Returns:
+        dict: Audit metadata including timestamps, system info, etc.
+    """
+    try:
+        hostname = socket.gethostname()
+
+        # Get primary IP address
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            host_ip = s.getsockname()[0]
+            s.close()
+        except:
+            host_ip = socket.gethostbyname(hostname)
+
+        # Get domain (Windows-specific, graceful fallback)
+        domain = 'N/A'
+        if IS_WINDOWS:
+            try:
+                domain_result = subprocess.run(
+                    ['powershell', '-Command', '(Get-WmiObject Win32_ComputerSystem).Domain'],
+                    capture_output=True, text=True, timeout=5
+                )
+                if domain_result.returncode == 0:
+                    domain = domain_result.stdout.strip()
+            except:
+                pass
+
+        # Calculate duration
+        duration = end_time - start_time
+        hours, remainder = divmod(int(duration.total_seconds()), 3600)
+        minutes, seconds = divmod(remainder, 60)
+        duration_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+        metadata = {
+            'report_timestamp': datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC'),
+            'report_timestamp_long': datetime.now(timezone.utc).strftime('%B %d, %Y at %H:%M:%S UTC'),
+            'start_timestamp': start_time.strftime('%Y-%m-%d %H:%M:%S UTC') if start_time else 'N/A',
+            'end_timestamp': end_time.strftime('%Y-%m-%d %H:%M:%S UTC') if end_time else 'N/A',
+            'script_version': '0.0.5',
+            'executed_by_user': getpass.getuser(),
+            'execution_hostname': hostname,
+            'host_ip_address': host_ip,
+            'domain': domain,
+            'working_directory': os.getcwd(),
+            'python_version': platform.python_version(),
+            'platform': platform.platform(),
+            'duration': duration_str,
+        }
+
+        return metadata
+
+    except Exception as e:
+        logging.error(f"Failed to collect audit metadata: {e}")
+        return {
+            'report_timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'executed_by_user': 'UNKNOWN',
+            'execution_hostname': 'UNKNOWN',
+            'host_ip_address': 'UNKNOWN',
+            'domain': 'N/A',
+            'working_directory': 'N/A',
+            'script_version': '0.0.5',
+        }
+
+
+def load_smtp_credentials(cred_file_path):
+    """
+    Load SMTP credentials from Windows DPAPI encrypted file
+
+    Args:
+        cred_file_path: Path to encrypted credential file
+
+    Returns:
+        tuple: (username, password) or (None, None) if failed
+    """
+    if not os.path.exists(cred_file_path):
+        logging.warning(f"SMTP credential file not found: {cred_file_path}")
+        return None, None
+
+    try:
+        if IS_WINDOWS:
+            ps_script = f"$cred = Import-Clixml -Path '{cred_file_path}'; $cred.GetNetworkCredential().UserName; $cred.GetNetworkCredential().Password"
+            result = subprocess.run(
+                ['powershell', '-Command', ps_script],
+                capture_output=True, text=True, check=True, timeout=10
+            )
+            lines = result.stdout.strip().split('\n')
+            if len(lines) >= 2:
+                return lines[0].strip(), lines[1].strip()
+            else:
+                logging.error("SMTP credential file format invalid")
+                return None, None
+        else:
+            logging.warning("SMTP credential file only supported on Windows (DPAPI)")
+            return None, None
+    except Exception as e:
+        logging.error(f"Failed to load SMTP credentials: {e}")
+        return None, None
+
+
+def build_collection_summary(results, start_time, end_time, collection_mode, output_dir):
+    """
+    Aggregate collection results into summary statistics
+
+    Args:
+        results: List of collection result dictionaries
+        start_time: Collection start datetime
+        end_time: Collection end datetime
+        collection_mode: 'DeviceList' or 'Discovery'
+        output_dir: Output directory path
+
+    Returns:
+        dict: Summary statistics and metadata
+    """
+    total = len(results)
+    successful = sum(1 for r in results if r.get('status') == 'success')
+    failed = sum(1 for r in results if r.get('status') == 'failed')
+    offline = sum(1 for r in results if r.get('status') == 'offline')
+
+    success_rate = round((successful / total * 100) if total > 0 else 0, 1)
+
+    # Collect top failure reasons
+    failure_reasons = {}
+    for r in results:
+        if r.get('status') in ['failed', 'offline']:
+            reason = r.get('error', 'Unknown error')
+            failure_reasons[reason] = failure_reasons.get(reason, 0) + 1
+
+    top_failures = sorted(failure_reasons.items(), key=lambda x: x[1], reverse=True)[:5]
+    top_failures = [f"{reason} ({count} devices)" for reason, count in top_failures]
+
+    # Get audit metadata
+    metadata = collect_audit_metadata(start_time, end_time)
+
+    summary = {
+        'total_devices': total,
+        'successful': successful,
+        'failed': failed,
+        'offline': offline,
+        'success_rate': success_rate,
+        'collection_mode': collection_mode,
+        'output_directory': output_dir,
+        'collection_date': datetime.now().strftime('%m/%d/%Y'),
+        'top_failures': top_failures,
+    }
+
+    # Merge metadata
+    summary.update(metadata)
+
+    return summary
+
+
+def generate_html_email_body(summary):
+    """
+    Generate HTML email body using Jinja2 template
+
+    Args:
+        summary: Summary statistics dictionary
+
+    Returns:
+        str: HTML content for email body
+    """
+    if not JINJA2_AVAILABLE:
+        logging.error("Jinja2 not available - cannot generate HTML email")
+        return None
+
+    try:
+        # Get script directory and template path
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        template_dir = os.path.join(script_dir, 'templates')
+
+        if not os.path.exists(template_dir):
+            logging.error(f"Template directory not found: {template_dir}")
+            return None
+
+        env = Environment(
+            loader=FileSystemLoader(template_dir),
+            autoescape=select_autoescape(['html', 'xml'])
+        )
+
+        template = env.get_template('email_template.html')
+        html_content = template.render(**summary)
+
+        return html_content
+
+    except Exception as e:
+        logging.error(f"Failed to generate HTML email body: {e}")
+        return None
+
+
+def generate_detailed_report_attachment(results, summary):
+    """
+    Generate detailed HTML report for email attachment
+
+    Args:
+        results: List of collection result dictionaries
+        summary: Summary statistics dictionary
+
+    Returns:
+        tuple: (filename, html_content)
+    """
+    try:
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        filename = f"cisco-techsupport-report-{timestamp}.html"
+
+        html_parts = []
+        html_parts.append("""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Cisco Tech-Support Collection - Detailed Report</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+
+        h1, h2, h3 {
+            color: #1e3a8a;
+        }
+
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 20px 0;
+            background-color: white;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        th {
+            background-color: #3b82f6;
+            color: white;
+            padding: 12px;
+            text-align: left;
+        }
+
+        td {
+            padding: 10px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        tr:hover {
+            background-color: #f8fafc;
+        }
+
+        .status-success {
+            color: #065f46;
+            font-weight: bold;
+        }
+
+        .status-failed {
+            color: #991b1b;
+            font-weight: bold;
+        }
+
+        .status-offline {
+            color: #92400e;
+            font-weight: bold;
+        }
+
+        .metadata {
+            background-color: white;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body>
+    <h1>Cisco Tech-Support Collection - Detailed Audit Report</h1>
+""")
+
+        # Audit Trail Information
+        html_parts.append("<div class='metadata'><h2>AUDIT TRAIL INFORMATION</h2><table>")
+        html_parts.append("<tr><th>Attribute</th><th>Value</th></tr>")
+        audit_fields = [
+            ('Report Generated (UTC)', summary.get('report_timestamp')),
+            ('Script Version', summary.get('script_version')),
+            ('Executed By (User)', summary.get('executed_by_user')),
+            ('Execution Host', summary.get('execution_hostname')),
+            ('Host IP Address', summary.get('host_ip_address')),
+            ('Domain', summary.get('domain')),
+            ('Working Directory', summary.get('working_directory')),
+            ('Python Version', summary.get('python_version')),
+            ('Platform', summary.get('platform')),
+            ('Collection Start', summary.get('start_timestamp')),
+            ('Collection End', summary.get('end_timestamp')),
+            ('Total Duration', summary.get('duration')),
+            ('Collection Mode', summary.get('collection_mode')),
+            ('Output Directory', summary.get('output_directory')),
+        ]
+        for field, value in audit_fields:
+            html_parts.append(f"<tr><td>{field}</td><td>{value}</td></tr>")
+        html_parts.append("</table></div>")
+
+        # Executive Summary
+        html_parts.append("<div class='metadata'><h2>EXECUTIVE SUMMARY</h2><table>")
+        html_parts.append("<tr><th>Metric</th><th>Value</th></tr>")
+        summary_fields = [
+            ('Total Devices', summary.get('total_devices')),
+            ('Successful', summary.get('successful')),
+            ('Failed', summary.get('failed')),
+            ('Offline/Unreachable', summary.get('offline')),
+            ('Success Rate', f"{summary.get('success_rate')}%"),
+        ]
+        for field, value in summary_fields:
+            html_parts.append(f"<tr><td>{field}</td><td>{value}</td></tr>")
+        html_parts.append("</table></div>")
+
+        # Device Details
+        html_parts.append("<h2>DEVICE-BY-DEVICE RESULTS</h2><table>")
+        html_parts.append("<tr><th>Device IP</th><th>Hostname</th><th>Status</th><th>Details</th></tr>")
+
+        for result in results:
+            device = result.get('device', 'Unknown')
+            hostname = result.get('hostname', 'N/A')
+            status = result.get('status', 'unknown')
+
+            status_class = 'status-success' if status == 'success' else ('status-offline' if status == 'offline' else 'status-failed')
+            status_text = status.upper()
+
+            details = result.get('file_path', '') if status == 'success' else result.get('error', 'No details')
+
+            html_parts.append(f"<tr>")
+            html_parts.append(f"  <td>{device}</td>")
+            html_parts.append(f"  <td>{hostname}</td>")
+            html_parts.append(f"  <td class='{status_class}'>{status_text}</td>")
+            html_parts.append(f"  <td>{details}</td>")
+            html_parts.append(f"</tr>")
+
+        html_parts.append("</table>")
+        html_parts.append("</body></html>")
+
+        html_content = '\n'.join(html_parts)
+
+        return filename, html_content
+
+    except Exception as e:
+        logging.error(f"Failed to generate detailed report: {e}")
+        return None, None
+
+
+def send_email_notification(smtp_config, summary, results):
+    """
+    Send email notification with HTML summary and detailed attachment
+
+    Args:
+        smtp_config: Dict with SMTP configuration
+        summary: Summary statistics dictionary
+        results: List of collection result dictionaries
+
+    Returns:
+        bool: True if email sent successfully, False otherwise
+    """
+    try:
+        # Validate required config
+        if not smtp_config.get('server'):
+            logging.error("SMTP server not specified")
+            return False
+        if not smtp_config.get('from'):
+            logging.error("Email 'from' address not specified")
+            return False
+        if not smtp_config.get('to'):
+            logging.error("Email 'to' addresses not specified")
+            return False
+
+        # Prepare email subject
+        subject = smtp_config.get('subject')
+        if not subject:
+            subject = f"Cisco Tech-Support Collection Report - {summary.get('collection_date')}"
+        elif not any(char.isdigit() for char in subject):
+            # Append date if not already present
+            subject = f"{subject} - {summary.get('collection_date')}"
+
+        # Create message
+        msg = MIMEMultipart('mixed')
+        msg['Subject'] = subject
+        msg['From'] = smtp_config['from']
+        msg['To'] = ', '.join(smtp_config['to'])
+
+        # Generate HTML body
+        html_body = generate_html_email_body(summary)
+        if html_body:
+            msg.attach(MIMEText(html_body, 'html'))
+        else:
+            # Fallback to plain text if HTML generation fails
+            text_body = f"""
+Cisco Tech-Support Collection Report
+{'='*50}
+
+Total Devices: {summary.get('total_devices')}
+Successful: {summary.get('successful')}
+Failed: {summary.get('failed')}
+Offline: {summary.get('offline')}
+Success Rate: {summary.get('success_rate')}%
+
+Collection completed on {summary.get('collection_date')}
+
+See attached detailed report for device-by-device breakdown.
+"""
+            msg.attach(MIMEText(text_body, 'plain'))
+
+        # Generate and attach detailed report
+        filename, detailed_html = generate_detailed_report_attachment(results, summary)
+        if filename and detailed_html:
+            attachment = MIMEBase('text', 'html')
+            attachment.set_payload(detailed_html.encode('utf-8'))
+            encoders.encode_base64(attachment)
+            attachment.add_header('Content-Disposition', f'attachment; filename="{filename}"')
+            msg.attach(attachment)
+
+        # Send email via SMTP
+        logging.info(f"Connecting to SMTP server: {smtp_config['server']}:{smtp_config.get('port', 25)}")
+
+        if smtp_config.get('use_ssl'):
+            server = smtplib.SMTP_SSL(smtp_config['server'], smtp_config.get('port', 465), timeout=30)
+        else:
+            server = smtplib.SMTP(smtp_config['server'], smtp_config.get('port', 25), timeout=30)
+            if smtp_config.get('use_starttls'):
+                server.starttls()
+
+        # Authenticate if credentials provided
+        if smtp_config.get('username') and smtp_config.get('password'):
+            logging.info("Authenticating to SMTP server...")
+            server.login(smtp_config['username'], smtp_config['password'])
+
+        # Send email
+        logging.info(f"Sending email to: {', '.join(smtp_config['to'])}")
+        server.send_message(msg)
+        server.quit()
+
+        logging.info("Email notification sent successfully")
+        return True
+
+    except Exception as e:
+        logging.error(f"Failed to send email notification: {e}")
+        return False
 
 # endregion
 
