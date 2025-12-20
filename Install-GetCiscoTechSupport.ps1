@@ -606,10 +606,10 @@ function Expand-ArchiveCompat {
                 Start-Sleep -Milliseconds 100
             }
 
-            # Check if job completed successfully
-            $extractJob | Wait-Job | Out-Null
+            # Job is done - check if it completed successfully
             if ($extractJob.State -eq 'Completed') {
-                Receive-Job -Job $extractJob -Wait -AutoRemoveJob | Out-Null
+                Receive-Job -Job $extractJob | Out-Null
+                Remove-Job -Job $extractJob -Force
                 Write-Host "`bDone!" -ForegroundColor Green
 
                 if ($psVersion -ge 7) {
@@ -620,7 +620,7 @@ function Expand-ArchiveCompat {
                 }
             }
             else {
-                $jobError = Receive-Job -Job $extractJob -Wait -AutoRemoveJob
+                $jobError = Receive-Job -Job $extractJob
                 Remove-Job -Job $extractJob -Force -ErrorAction SilentlyContinue
                 throw $jobError
             }
@@ -1288,7 +1288,8 @@ Read-Host
                 Start-Sleep -Milliseconds 100
             }
 
-            $secureJobResult = Receive-Job -Job $secureJob -Wait -AutoRemoveJob
+            $secureJobResult = Receive-Job -Job $secureJob
+            Remove-Job -Job $secureJob -Force
 
             if ($secureJobResult.Success) {
                 Write-Host "`bDone!" -ForegroundColor Green
@@ -2513,7 +2514,8 @@ function Uninstall-CiscoCollector {
                 }
                 Write-Host "`b " -NoNewline  # Clear the spinner
 
-                $takeownOutput = Receive-Job -Job $takeownJob -Wait -AutoRemoveJob
+                $takeownOutput = Receive-Job -Job $takeownJob
+                Remove-Job -Job $takeownJob -Force
                 Write-InstallLog -Message "Directory takeown completed" -Level INFO -NoConsole
 
                 # Run icacls reset with progress indicator
@@ -2530,7 +2532,8 @@ function Uninstall-CiscoCollector {
                 }
                 Write-Host "`b " -NoNewline  # Clear the spinner
 
-                $icaclsOutput = Receive-Job -Job $icaclsJob -Wait -AutoRemoveJob
+                $icaclsOutput = Receive-Job -Job $icaclsJob
+                Remove-Job -Job $icaclsJob -Force
                 Write-InstallLog -Message "Directory ACL reset completed" -Level INFO -NoConsole
 
                 # Run icacls grant (usually fast, no progress needed)
@@ -2735,7 +2738,7 @@ function Install-CiscoCollector {
                         & takeown.exe /F $path /R /A /D Y 2>&1
                     } -ArgumentList $InstallPath
 
-                    # Show animated dots while waiting
+                    # Show animated spinner while waiting
                     $spinChars = @('|', '/', '-', '\')
                     $spinIndex = 0
                     while ($takeownJob.State -eq 'Running') {
@@ -2745,7 +2748,8 @@ function Install-CiscoCollector {
                     }
                     Write-Host "`b " -NoNewline  # Clear the spinner
 
-                    $takeownOutput = Receive-Job -Job $takeownJob -Wait -AutoRemoveJob
+                    $takeownOutput = Receive-Job -Job $takeownJob
+                    Remove-Job -Job $takeownJob -Force
                     Write-InstallLog -Message "Directory takeown completed" -Level INFO -NoConsole
 
                     # Run icacls reset with progress indicator
@@ -2762,7 +2766,8 @@ function Install-CiscoCollector {
                     }
                     Write-Host "`b " -NoNewline  # Clear the spinner
 
-                    $icaclsOutput = Receive-Job -Job $icaclsJob -Wait -AutoRemoveJob
+                    $icaclsOutput = Receive-Job -Job $icaclsJob
+                    Remove-Job -Job $icaclsJob -Force
                     Write-InstallLog -Message "Directory ACL reset completed" -Level INFO -NoConsole
 
                     # Run icacls grant (usually fast, no progress needed)
