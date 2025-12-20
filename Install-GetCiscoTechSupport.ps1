@@ -167,7 +167,7 @@
 .NOTES
     Author: Kismet Agbasi (Github: kismetgerald Email: KismetG17@gmail.com)
     Version: 0.0.5
-    Date: December 18, 2025
+    Date: December 20, 2025
     Requires: PowerShell 5.1+ with Administrator privileges
     
     IMPORTANT: This script is designed for embedded Python distributions.
