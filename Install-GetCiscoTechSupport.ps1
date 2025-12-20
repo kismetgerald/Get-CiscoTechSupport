@@ -2311,8 +2311,7 @@ function Uninstall-CiscoCollector {
 
             # Handle credential files with restricted ACLs before directory removal
             $credentialFiles = @(
-                "$InstallPath\cisco_creds.xml",
-                "$InstallPath\snmp_creds.xml"
+                "$InstallPath\.cisco_credentials"
             )
 
             foreach ($credFile in $credentialFiles) {
