@@ -1330,7 +1330,32 @@ Examples:
                        help=f'Number of concurrent connections (default: {DEFAULT_MAX_WORKERS})')
     parser.add_argument('--non-interactive', action='store_true',
                        help='Run in non-interactive mode (for scheduled tasks) - will fail if credentials not available')
-    
+
+    # Email notification options
+    email_group = parser.add_argument_group('Email Notification Options')
+    email_group.add_argument('--send-email', action='store_true',
+                            help='Send email notification after collection completes')
+    email_group.add_argument('--smtp-server', type=str,
+                            help='SMTP server hostname or IP address')
+    email_group.add_argument('--smtp-port', type=int, default=25,
+                            help='SMTP server port (default: 25)')
+    email_group.add_argument('--smtp-use-ssl', action='store_true',
+                            help='Use SSL/TLS for SMTP connection (port 465)')
+    email_group.add_argument('--smtp-use-starttls', action='store_true',
+                            help='Use STARTTLS for SMTP connection (port 587)')
+    email_group.add_argument('--email-from', type=str,
+                            help='Sender email address')
+    email_group.add_argument('--email-to', type=str,
+                            help='Recipient email addresses (comma-separated)')
+    email_group.add_argument('--email-subject', type=str,
+                            help='Email subject line (default: auto-generated with date)')
+    email_group.add_argument('--smtp-cred-file', type=str,
+                            help='Path to SMTP credential file (encrypted, Windows DPAPI)')
+    email_group.add_argument('--smtp-username', type=str,
+                            help='SMTP username for authentication')
+    email_group.add_argument('--smtp-password', type=str,
+                            help='SMTP password for authentication')
+
     args = parser.parse_args()
     
     early_logger.info(f"Running in {'non-interactive' if args.non_interactive else 'interactive'} mode")
