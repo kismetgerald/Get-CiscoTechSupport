@@ -2309,7 +2309,7 @@ function Uninstall-CiscoCollector {
                 }
             }
 
-            # Handle credential files with restricted ACLs
+            # Handle credential files with restricted ACLs before directory removal
             $credentialFiles = @(
                 "$InstallPath\cisco_creds.xml",
                 "$InstallPath\snmp_creds.xml"
@@ -2318,31 +2318,60 @@ function Uninstall-CiscoCollector {
             foreach ($credFile in $credentialFiles) {
                 if (Test-Path $credFile) {
                     try {
-                        Write-InstallLog -Message "Removing restricted credential file: $credFile" -Level INFO
+                        Write-InstallLog -Message "Attempting to remove credential file: $credFile" -Level INFO
 
-                        # Take ownership of the file
-                        $acl = Get-Acl $credFile
-                        $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-                        $acl.SetOwner([System.Security.Principal.NTAccount]$currentUser)
-                        Set-Acl -Path $credFile -AclObject $acl
+                        # Method 1: Try direct removal first
+                        try {
+                            Remove-Item -Path $credFile -Force -ErrorAction Stop
+                            Write-InstallLog -Message "Credential file removed (direct): $credFile" -Level SUCCESS
+                            continue
+                        }
+                        catch {
+                            Write-InstallLog -Message "Direct removal failed, attempting ACL modification: $_" -Level INFO -NoConsole
+                        }
 
-                        # Grant full control to current user
-                        $acl = Get-Acl $credFile
-                        $permission = [System.Security.Principal.NTAccount]$currentUser, "FullControl", "Allow"
-                        $accessRule = New-Object System.Security.AccessControl.FileSystemAccessRule $permission
-                        $acl.SetAccessRule($accessRule)
-                        Set-Acl -Path $credFile -AclObject $acl
+                        # Method 2: Use icacls for more reliable ACL modification
+                        $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent()
 
-                        # Now remove the file
+                        Write-InstallLog -Message "Taking ownership with icacls: $credFile" -Level INFO -NoConsole
+                        $icaclsOutput = & icacls.exe $credFile /setowner "$($currentUser.Name)" 2>&1
+                        Write-InstallLog -Message "icacls setowner: $icaclsOutput" -Level INFO -NoConsole
+
+                        Write-InstallLog -Message "Granting full control with icacls: $credFile" -Level INFO -NoConsole
+                        $icaclsOutput = & icacls.exe $credFile /grant "$($currentUser.Name):(F)" 2>&1
+                        Write-InstallLog -Message "icacls grant: $icaclsOutput" -Level INFO -NoConsole
+
+                        # Try removal again after ACL modification
+                        Start-Sleep -Milliseconds 500  # Brief pause for ACL propagation
                         Remove-Item -Path $credFile -Force -ErrorAction Stop
-                        Write-InstallLog -Message "Credential file removed: $credFile" -Level SUCCESS
+                        Write-InstallLog -Message "Credential file removed (after ACL mod): $credFile" -Level SUCCESS
                     }
                     catch {
                         Write-InstallLog -Message "Failed to remove credential file $credFile : $_" -Level WARNING
-                        Write-Host "  Warning: Could not remove credential file: $credFile" -ForegroundColor Yellow
-                        Write-Host "  You may need to manually delete this file." -ForegroundColor Yellow
+                        Write-InstallLog -Message "Error details: $($_.Exception.Message)" -Level WARNING
+                        Write-Host "  Warning: Could not remove credential file: $(Split-Path $credFile -Leaf)" -ForegroundColor Yellow
+                        Write-Host "  File will be removed with installation directory." -ForegroundColor Gray
                     }
                 }
+            }
+
+            # Reset permissions on entire directory tree to ensure removal succeeds
+            try {
+                Write-InstallLog -Message "Resetting permissions on installation directory" -Level INFO -NoConsole
+                $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+
+                # Reset permissions recursively with icacls
+                $icaclsOutput = & icacls.exe $InstallPath /reset /T /C /Q 2>&1
+                Write-InstallLog -Message "icacls reset output: $icaclsOutput" -Level INFO -NoConsole
+
+                # Grant full control to current user recursively
+                $icaclsOutput = & icacls.exe $InstallPath /grant "$($currentUser.Name):(OI)(CI)F" /T /C /Q 2>&1
+                Write-InstallLog -Message "icacls grant output: $icaclsOutput" -Level INFO -NoConsole
+
+                Start-Sleep -Milliseconds 500  # Brief pause for ACL propagation
+            }
+            catch {
+                Write-InstallLog -Message "Failed to reset permissions: $_" -Level WARNING -NoConsole
             }
 
             Remove-Item -Path $InstallPath -Recurse -Force -ErrorAction Stop
@@ -2351,6 +2380,14 @@ function Uninstall-CiscoCollector {
         }
         catch {
             Write-InstallLog -Message "Failed to remove installation directory: $_" -Level ERROR
+            Write-InstallLog -Message "Error details: $($_.Exception.Message)" -Level ERROR
+
+            # Provide more helpful error message
+            Write-Host "`nFailed to remove installation directory." -ForegroundColor Red
+            Write-Host "This may be due to file permissions or files in use." -ForegroundColor Yellow
+            Write-Host "Directory location: $InstallPath" -ForegroundColor Gray
+            Write-Host "`nYou can manually delete this directory after closing any running processes." -ForegroundColor Yellow
+
             $componentsFailed += "Installation Directory"
         }
         
