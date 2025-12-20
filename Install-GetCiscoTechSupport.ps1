@@ -2310,6 +2310,7 @@ function Uninstall-CiscoCollector {
             }
 
             # Handle credential files with restricted ACLs before directory removal
+            # Use aggressive approach: takeown + icacls /remove + direct deletion
             $credentialFiles = @(
                 "$InstallPath\.cisco_credentials"
             )
@@ -2326,30 +2327,41 @@ function Uninstall-CiscoCollector {
                             continue
                         }
                         catch {
-                            Write-InstallLog -Message "Direct removal failed, attempting ACL modification: $_" -Level INFO -NoConsole
+                            Write-InstallLog -Message "Direct removal failed, using aggressive ACL removal: $_" -Level INFO -NoConsole
                         }
 
-                        # Method 2: Use icacls for more reliable ACL modification
-                        $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+                        # Method 2: Aggressive approach - takeown + remove all ACLs + delete
 
-                        Write-InstallLog -Message "Taking ownership with icacls: $credFile" -Level INFO -NoConsole
-                        $icaclsOutput = & icacls.exe $credFile /setowner "$($currentUser.Name)" 2>&1
-                        Write-InstallLog -Message "icacls setowner: $icaclsOutput" -Level INFO -NoConsole
+                        # Step 1: Take ownership with takeown.exe (more reliable than icacls for locked files)
+                        Write-InstallLog -Message "Taking ownership with takeown: $credFile" -Level INFO -NoConsole
+                        $takeownOutput = & takeown.exe /F $credFile /A 2>&1
+                        Write-InstallLog -Message "takeown output: $takeownOutput" -Level INFO -NoConsole
 
-                        Write-InstallLog -Message "Granting full control with icacls: $credFile" -Level INFO -NoConsole
-                        $icaclsOutput = & icacls.exe $credFile /grant "$($currentUser.Name):(F)" 2>&1
-                        Write-InstallLog -Message "icacls grant: $icaclsOutput" -Level INFO -NoConsole
+                        # Step 2: Remove ALL existing ACLs and reset to defaults
+                        Write-InstallLog -Message "Removing all ACLs: $credFile" -Level INFO -NoConsole
+                        $icaclsOutput = & icacls.exe $credFile /reset 2>&1
+                        Write-InstallLog -Message "icacls reset output: $icaclsOutput" -Level INFO -NoConsole
 
-                        # Try removal again after ACL modification
+                        # Step 3: Grant explicit full control to Administrators group
+                        $icaclsOutput = & icacls.exe $credFile /grant "Administrators:(F)" 2>&1
+                        Write-InstallLog -Message "icacls grant output: $icaclsOutput" -Level INFO -NoConsole
+
+                        # Step 4: Remove the file attribute readonly if set
+                        if ((Get-Item $credFile -Force).Attributes -band [System.IO.FileAttributes]::ReadOnly) {
+                            Set-ItemProperty -Path $credFile -Name Attributes -Value ([System.IO.FileAttributes]::Normal) -Force
+                            Write-InstallLog -Message "Removed ReadOnly attribute" -Level INFO -NoConsole
+                        }
+
+                        # Try removal again after aggressive ACL removal
                         Start-Sleep -Milliseconds 500  # Brief pause for ACL propagation
                         Remove-Item -Path $credFile -Force -ErrorAction Stop
-                        Write-InstallLog -Message "Credential file removed (after ACL mod): $credFile" -Level SUCCESS
+                        Write-InstallLog -Message "Credential file removed (after aggressive ACL removal): $credFile" -Level SUCCESS
                     }
                     catch {
                         Write-InstallLog -Message "Failed to remove credential file $credFile : $_" -Level WARNING
                         Write-InstallLog -Message "Error details: $($_.Exception.Message)" -Level WARNING
                         Write-Host "  Warning: Could not remove credential file: $(Split-Path $credFile -Leaf)" -ForegroundColor Yellow
-                        Write-Host "  File will be removed with installation directory." -ForegroundColor Gray
+                        Write-Host "  Attempting directory-level removal..." -ForegroundColor Gray
                     }
                 }
             }
@@ -2357,17 +2369,21 @@ function Uninstall-CiscoCollector {
             # Reset permissions on entire directory tree to ensure removal succeeds
             try {
                 Write-InstallLog -Message "Resetting permissions on installation directory" -Level INFO -NoConsole
-                $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+
+                # Use takeown on entire directory tree
+                Write-InstallLog -Message "Taking ownership of directory tree with takeown" -Level INFO -NoConsole
+                $takeownOutput = & takeown.exe /F $InstallPath /R /A /D Y 2>&1
+                Write-InstallLog -Message "takeown output: $takeownOutput" -Level INFO -NoConsole
 
                 # Reset permissions recursively with icacls
                 $icaclsOutput = & icacls.exe $InstallPath /reset /T /C /Q 2>&1
                 Write-InstallLog -Message "icacls reset output: $icaclsOutput" -Level INFO -NoConsole
 
-                # Grant full control to current user recursively
-                $icaclsOutput = & icacls.exe $InstallPath /grant "$($currentUser.Name):(OI)(CI)F" /T /C /Q 2>&1
+                # Grant full control to Administrators group recursively
+                $icaclsOutput = & icacls.exe $InstallPath /grant "Administrators:(OI)(CI)F" /T /C /Q 2>&1
                 Write-InstallLog -Message "icacls grant output: $icaclsOutput" -Level INFO -NoConsole
 
-                Start-Sleep -Milliseconds 500  # Brief pause for ACL propagation
+                Start-Sleep -Milliseconds 1000  # Longer pause for full ACL propagation
             }
             catch {
                 Write-InstallLog -Message "Failed to reset permissions: $_" -Level WARNING -NoConsole
