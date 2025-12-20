@@ -1317,6 +1317,346 @@ Read-Host
         return $false
     }
 }
+
+function Start-SMTPCredentialSetup {
+    <#
+    .SYNOPSIS
+        Configures SMTP credentials for the service account.
+
+    .DESCRIPTION
+        Creates an encrypted credential file (.smtp_credentials) in the installation directory
+        that stores SMTP username and password. Uses RunAs with the service account to ensure
+        the credentials are encrypted with the service account's DPAPI keys.
+
+    .PARAMETER ServiceAccountCred
+        PSCredential object for the service account
+
+    .PARAMETER InstallPath
+        Installation directory where the credential file will be created
+
+    .PARAMETER SMTPUsername
+        SMTP username for authentication
+
+    .PARAMETER SMTPPassword
+        SecureString containing the SMTP password
+
+    .RETURNS
+        Boolean indicating success or failure
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [PSCredential]$ServiceAccountCred,
+
+        [Parameter(Mandatory = $true)]
+        [string]$InstallPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$SMTPUsername,
+
+        [Parameter(Mandatory = $true)]
+        [SecureString]$SMTPPassword
+    )
+
+    Write-Host ""
+    Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host "  SMTP Credential Setup" -ForegroundColor Cyan
+    Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host ""
+
+    $credFile = Join-Path $InstallPath ".smtp_credentials"
+    Write-InstallLog -Message "Starting SMTP credential setup: $credFile" -Level INFO
+
+    # Check for existing credential file
+    if (Test-Path $credFile) {
+        Write-Host "WARNING: SMTP credential file already exists" -ForegroundColor Yellow
+        Write-Host "  Location: $credFile" -ForegroundColor Gray
+        Write-Host ""
+        $overwrite = Read-Host "Overwrite existing SMTP credentials? (Y/N)"
+        if ($overwrite -notmatch '^[Yy]') {
+            Write-Host "Keeping existing SMTP credential file" -ForegroundColor Yellow
+            Write-InstallLog -Message "User chose to keep existing SMTP credential file" -Level INFO
+            return $true
+        }
+        Write-InstallLog -Message "Overwriting existing SMTP credential file" -Level INFO
+    }
+
+    # Check if Secondary Logon service is disabled (STIG V-253289)
+    Write-Host "Checking Secondary Logon service status..." -ForegroundColor Cyan
+    $secondaryLogonService = Get-Service -Name "seclogon" -ErrorAction SilentlyContinue
+    $stigDisabled = $false
+
+    if ($secondaryLogonService -and $secondaryLogonService.StartType -eq 'Disabled') {
+        Write-Host "  NOTE: Secondary Logon service is DISABLED (STIG V-253289 compliant)" -ForegroundColor Yellow
+        Write-Host "  Will temporarily enable to create credentials, then restore" -ForegroundColor Yellow
+        Write-InstallLog -Message "Secondary Logon disabled per STIG V-253289 - will temporarily enable" -Level INFO
+        $stigDisabled = $true
+
+        Write-Host ""
+        Write-Host "Temporarily enabling Secondary Logon service..." -ForegroundColor Cyan -NoNewline
+        try {
+            Set-Service -Name "seclogon" -StartupType Manual -ErrorAction Stop
+            Start-Service -Name "seclogon" -ErrorAction Stop
+            Start-Sleep -Seconds 2
+            Write-Host "Done!" -ForegroundColor Green
+            Write-InstallLog -Message "Secondary Logon service temporarily enabled" -Level INFO
+        }
+        catch {
+            Write-Host "FAILED!" -ForegroundColor Red
+            Write-Host "ERROR: Could not enable Secondary Logon service" -ForegroundColor Red
+            Write-Host "Error: $_" -ForegroundColor Red
+            Write-InstallLog -Message "Failed to enable Secondary Logon service: $_" -Level ERROR
+            return $false
+        }
+    }
+
+    try {
+        Write-Host ""
+        Write-Host "Creating SMTP credential file as service account..." -ForegroundColor Cyan
+        Write-Host "  Service Account: $($ServiceAccountCred.UserName)" -ForegroundColor Gray
+        Write-Host "  SMTP Username: $SMTPUsername" -ForegroundColor Gray
+        Write-Host ""
+
+        # Convert SecureString password to plaintext for RunAs (required for credential creation)
+        $serviceAccountPassword = $ServiceAccountCred.GetNetworkCredential().Password
+        $smtpPasswordPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+            [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SMTPPassword)
+        )
+
+        # Create a PowerShell script to run as the service account
+        $credSetupScript = @"
+`$ErrorActionPreference = 'Stop'
+
+# Create PSCredential object for SMTP
+`$securePassword = ConvertTo-SecureString '$smtpPasswordPlain' -AsPlainText -Force
+`$smtpCred = New-Object System.Management.Automation.PSCredential('$SMTPUsername', `$securePassword)
+
+# Export credential using Export-Clixml (encrypts with DPAPI)
+`$smtpCred | Export-Clixml -Path '$credFile' -Force
+
+# Verify the file was created
+if (Test-Path '$credFile') {
+    `$fileInfo = Get-Item '$credFile'
+    Write-Output "SUCCESS: Credential file created (`$(`$fileInfo.Length) bytes)"
+    exit 0
+} else {
+    Write-Output "ERROR: Credential file was not created"
+    exit 1
+}
+"@
+
+        # Save the script to a temporary file
+        $tempScriptPath = Join-Path $env:TEMP "smtp_cred_setup_$([guid]::NewGuid()).ps1"
+        $credSetupScript | Out-File -FilePath $tempScriptPath -Encoding UTF8 -Force
+        Write-InstallLog -Message "Created temporary credential setup script: $tempScriptPath" -Level INFO -NoConsole
+
+        try {
+            # Execute the script as the service account using RunAs
+            Write-Host "Executing credential setup as service account..." -ForegroundColor Cyan
+            Write-Host "(You may see a credential prompt window - this is expected)" -ForegroundColor Gray
+            Write-Host ""
+
+            $processArgs = @(
+                "/user:$($ServiceAccountCred.UserName)",
+                "powershell.exe -ExecutionPolicy Bypass -NoProfile -File `"$tempScriptPath`""
+            )
+
+            $processInfo = New-Object System.Diagnostics.ProcessStartInfo
+            $processInfo.FileName = "runas.exe"
+            $processInfo.Arguments = $processArgs -join ' '
+            $processInfo.UseShellExecute = $false
+            $processInfo.RedirectStandardInput = $true
+            $processInfo.RedirectStandardOutput = $true
+            $processInfo.RedirectStandardError = $true
+            $processInfo.CreateNoWindow = $true
+
+            $process = New-Object System.Diagnostics.Process
+            $process.StartInfo = $processInfo
+
+            $null = $process.Start()
+
+            # Send the password to runas via stdin
+            $process.StandardInput.WriteLine($serviceAccountPassword)
+            $process.StandardInput.Close()
+
+            # Capture output
+            $output = $process.StandardOutput.ReadToEnd()
+            $errors = $process.StandardError.ReadToEnd()
+
+            $process.WaitForExit(30000)  # 30 second timeout
+
+            if ($process.ExitCode -ne 0) {
+                Write-Host "ERROR: Credential setup failed" -ForegroundColor Red
+                Write-Host "Exit Code: $($process.ExitCode)" -ForegroundColor Red
+                if ($output) { Write-Host "Output: $output" -ForegroundColor Gray }
+                if ($errors) { Write-Host "Errors: $errors" -ForegroundColor Red }
+                Write-InstallLog -Message "Credential setup failed with exit code $($process.ExitCode)" -Level ERROR
+                return $false
+            }
+
+            Write-InstallLog -Message "Credential setup script executed successfully" -Level INFO -NoConsole
+        }
+        finally {
+            # Clean up the temporary script
+            if (Test-Path $tempScriptPath) {
+                Remove-Item $tempScriptPath -Force -ErrorAction SilentlyContinue
+                Write-InstallLog -Message "Cleaned up temporary credential setup script" -Level INFO -NoConsole
+            }
+        }
+    }
+    finally {
+        # Restore STIG-compliant state if necessary
+        if ($stigDisabled) {
+            Write-Host ""
+            Write-Host "Restoring STIG-compliant service state..." -ForegroundColor Cyan -NoNewline
+            try {
+                Stop-Service -Name "seclogon" -Force -ErrorAction Stop
+                Set-Service -Name "seclogon" -StartupType Disabled -ErrorAction Stop
+                Write-Host "Done!" -ForegroundColor Green
+                Write-InstallLog -Message "Secondary Logon service restored to STIG-compliant state (Disabled)" -Level INFO
+            }
+            catch {
+                Write-Host "WARNING!" -ForegroundColor Yellow
+                Write-Host "WARNING: Could not restore Secondary Logon to disabled state" -ForegroundColor Yellow
+                Write-Host "Please manually disable the Secondary Logon service for STIG compliance" -ForegroundColor Yellow
+                Write-InstallLog -Message "Failed to restore Secondary Logon service: $_" -Level WARNING
+            }
+        }
+    }
+
+    # Verify the credential file exists and is not empty
+    Write-Host ""
+    Write-Host "Verifying SMTP credential file..." -ForegroundColor Cyan -NoNewline
+
+    # Animated spinner while waiting for file system to settle
+    $spinChars = @('|', '/', '-', '\')
+    $spinIndex = 0
+    $verifyAttempts = 0
+    $maxVerifyAttempts = 30  # 3 seconds max
+
+    while (-not (Test-Path $credFile) -and $verifyAttempts -lt $maxVerifyAttempts) {
+        Write-Host "`b$($spinChars[$spinIndex])" -NoNewline -ForegroundColor Cyan
+        $spinIndex = ($spinIndex + 1) % $spinChars.Length
+        Start-Sleep -Milliseconds 100
+        $verifyAttempts++
+    }
+    Write-Host "`b " -NoNewline  # Clear the spinner
+
+    if (Test-Path $credFile) {
+        $fileInfo = Get-Item $credFile
+        if ($fileInfo.Length -gt 0) {
+            Write-Host "Done!" -ForegroundColor Green
+            Write-Host "SUCCESS: SMTP credential file created and verified" -ForegroundColor Green
+            Write-Host "  Location: $credFile" -ForegroundColor Gray
+            Write-Host "  Size: $($fileInfo.Length) bytes" -ForegroundColor Gray
+            Write-Host "  Created: $($fileInfo.CreationTime)" -ForegroundColor Gray
+            Write-InstallLog -Message "SMTP credential file verified: $credFile ($($fileInfo.Length) bytes)" -Level SUCCESS
+
+            # Secure the credential file
+            Write-Host ""
+            Write-Host "Securing SMTP credential file..." -ForegroundColor Cyan -NoNewline
+
+            # Run ACL operations as a job so we can show progress
+            $secureJob = Start-Job -ScriptBlock {
+                param($credPath, $serviceAccount)
+
+                try {
+                    if (-not (Test-Path $credPath)) {
+                        return @{ Success = $false; Error = "File not found" }
+                    }
+
+                    # Set the hidden attribute
+                    $file = Get-Item $credPath -Force
+                    $file.Attributes = $file.Attributes -bor [System.IO.FileAttributes]::Hidden
+
+                    # Get the current ACL
+                    $acl = Get-Acl -Path $credPath
+
+                    # Disable inheritance and remove inherited permissions
+                    $acl.SetAccessRuleProtection($true, $false)
+
+                    # Remove all existing access rules
+                    $acl.Access | ForEach-Object { $acl.RemoveAccessRule($_) | Out-Null }
+
+                    # Create access rule for service account (Read, Write)
+                    $serviceAccountIdentity = New-Object System.Security.Principal.NTAccount($serviceAccount)
+                    $fileSystemRights = [System.Security.AccessControl.FileSystemRights]::Read -bor `
+                                       [System.Security.AccessControl.FileSystemRights]::Write
+                    $accessType = [System.Security.AccessControl.AccessControlType]::Allow
+                    $inheritanceFlags = [System.Security.AccessControl.InheritanceFlags]::None
+                    $propagationFlags = [System.Security.AccessControl.PropagationFlags]::None
+
+                    $accessRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+                        $serviceAccountIdentity,
+                        $fileSystemRights,
+                        $inheritanceFlags,
+                        $propagationFlags,
+                        $accessType
+                    )
+
+                    $acl.AddAccessRule($accessRule)
+
+                    # Apply the modified ACL
+                    Set-Acl -Path $credPath -AclObject $acl
+
+                    # Verify the permissions
+                    $verifyAcl = Get-Acl -Path $credPath
+                    $serviceAccountAccess = $verifyAcl.Access | Where-Object {
+                        $_.IdentityReference.Value -eq $serviceAccount -or
+                        $_.IdentityReference.Value -like "*\$serviceAccount" -or
+                        $_.IdentityReference.Value -like "$serviceAccount"
+                    }
+
+                    if ($serviceAccountAccess) {
+                        return @{ Success = $true }
+                    }
+                    else {
+                        return @{ Success = $false; Error = "Could not verify permissions" }
+                    }
+                }
+                catch {
+                    return @{ Success = $false; Error = $_.Exception.Message }
+                }
+            } -ArgumentList $credFile, $ServiceAccountCred.UserName
+
+            # Show animated spinner while waiting
+            $spinChars = @('|', '/', '-', '\')
+            $spinIndex = 0
+            while ($secureJob.State -eq 'Running') {
+                Write-Host "`b$($spinChars[$spinIndex])" -NoNewline -ForegroundColor Cyan
+                $spinIndex = ($spinIndex + 1) % $spinChars.Length
+                Start-Sleep -Milliseconds 100
+            }
+
+            $secureJobResult = Receive-Job -Job $secureJob
+            Remove-Job -Job $secureJob -Force
+
+            if ($secureJobResult.Success) {
+                Write-Host "`bDone!" -ForegroundColor Green
+                Write-Host "SMTP credential file secured successfully" -ForegroundColor Green
+            }
+            else {
+                Write-Host "`bFailed!" -ForegroundColor Yellow
+                Write-Host "WARNING: Could not fully secure SMTP credential file" -ForegroundColor Yellow
+                Write-Host "Manual verification recommended" -ForegroundColor Yellow
+            }
+
+            return $true
+        }
+        else {
+            Write-Host "WARNING: SMTP credential file exists but is EMPTY" -ForegroundColor Yellow
+            Write-Host "The credential setup may not have completed successfully" -ForegroundColor Yellow
+            Write-InstallLog -Message "SMTP credential file is empty - setup may have failed" -Level WARNING
+            return $false
+        }
+    }
+    else {
+        Write-Host "WARNING: SMTP credential file was NOT created" -ForegroundColor Yellow
+        Write-Host "The credential setup did not complete successfully" -ForegroundColor Yellow
+        Write-InstallLog -Message "SMTP credential file not found after setup attempt" -Level WARNING
+        return $false
+    }
+}
 #endregion
 
 #region Python Validation Functions
@@ -3054,7 +3394,32 @@ function Install-CiscoCollector {
             }
             
             $taskArguments += " -o `"$OutputDirectory`""
-            
+
+            # Add email notification parameters if configured
+            if ($emailConfigured) {
+                $taskArguments += " --send-email"
+                $taskArguments += " --smtp-server `"$smtpServer`""
+                $taskArguments += " --smtp-port $smtpPort"
+
+                if ($smtpUseSsl) {
+                    $taskArguments += " --smtp-use-ssl"
+                }
+                if ($smtpUseStartTls) {
+                    $taskArguments += " --smtp-use-starttls"
+                }
+
+                $taskArguments += " --email-from `"$emailFrom`""
+                $taskArguments += " --email-to `"$emailTo`""
+                $taskArguments += " --email-subject `"$emailSubject`""
+
+                if ($smtpCredSetupSuccess) {
+                    $smtpCredFilePath = Join-Path $InstallPath ".smtp_credentials"
+                    $taskArguments += " --smtp-cred-file `"$smtpCredFilePath`""
+                }
+
+                Write-InstallLog -Message "Email notification parameters added to scheduled task" -Level INFO
+            }
+
             $createdTaskName = New-CiscoCollectorTask -InstallPath $InstallPath `
                                                        -ScheduleType $ScheduleType `
                                                        -ScheduleTime $ScheduleTime `
@@ -3082,6 +3447,208 @@ function Install-CiscoCollector {
                 Write-Host "Automated credential setup failed or was skipped." -ForegroundColor White
                 Write-Host "You'll need to follow the manual instructions in the NEXT STEPS section." -ForegroundColor White
                 Write-Host ""
+            }
+        }
+
+        # Email Notification Configuration
+        $enableEmail = $false
+        $emailConfigured = $false
+        $smtpServer = $null
+        $smtpPort = 587
+        $smtpUseSsl = $false
+        $smtpUseStartTls = $true
+        $emailFrom = $null
+        $emailTo = $null
+        $emailSubject = "Cisco Tech-Support Collection Report"
+        $smtpCredSetupSuccess = $false
+
+        if (-not $SkipTaskCreation -and $ScheduleType -ne 'None') {
+            Write-Host ""
+            Write-LogSection "EMAIL NOTIFICATION CONFIGURATION"
+
+            Write-Host ""
+            Write-Host "Email notifications can send automated collection reports after each run." -ForegroundColor Cyan
+            Write-Host ""
+            Write-Host "Features:" -ForegroundColor White
+            Write-Host "  - HTML email with collection summary" -ForegroundColor Gray
+            Write-Host "  - Attached detailed report" -ForegroundColor Gray
+            Write-Host "  - Success/failure status for each device" -ForegroundColor Gray
+            Write-Host "  - Audit metadata (timestamps, user, etc.)" -ForegroundColor Gray
+            Write-Host ""
+
+            $response = Read-Host "Enable email notifications? (yes/no) [no]"
+            if ([string]::IsNullOrWhiteSpace($response)) { $response = 'no' }
+
+            if ($response -match '^y(es)?$|^Y(ES)?$') {
+                $enableEmail = $true
+
+                # SMTP Server Configuration
+                Write-Host ""
+                Write-Host "SMTP Server Configuration" -ForegroundColor Cyan
+                Write-Host "=========================================" -ForegroundColor Cyan
+                Write-Host ""
+
+                # SMTP Server
+                while ([string]::IsNullOrWhiteSpace($smtpServer)) {
+                    $smtpServer = Read-Host "SMTP server hostname or IP"
+                    if ([string]::IsNullOrWhiteSpace($smtpServer)) {
+                        Write-Host "ERROR: SMTP server is required" -ForegroundColor Red
+                    }
+                }
+
+                # SMTP Port
+                $portInput = Read-Host "SMTP port [587]"
+                if (-not [string]::IsNullOrWhiteSpace($portInput)) {
+                    if ($portInput -match '^\d+$') {
+                        $smtpPort = [int]$portInput
+                    }
+                    else {
+                        Write-Host "WARNING: Invalid port number, using default: 587" -ForegroundColor Yellow
+                        $smtpPort = 587
+                    }
+                }
+
+                # SMTP Encryption
+                Write-Host ""
+                Write-Host "SMTP Encryption Method" -ForegroundColor Cyan
+                Write-Host "  1. STARTTLS (port 587) - Recommended for most servers" -ForegroundColor White
+                Write-Host "  2. SSL/TLS (port 465) - Implicit SSL" -ForegroundColor White
+                Write-Host "  3. None (port 25) - Unencrypted (not recommended)" -ForegroundColor White
+                $encryptionChoice = Read-Host "Selection [1]"
+                if ([string]::IsNullOrWhiteSpace($encryptionChoice)) { $encryptionChoice = '1' }
+
+                switch ($encryptionChoice) {
+                    '1' {
+                        $smtpUseSsl = $false
+                        $smtpUseStartTls = $true
+                        Write-InstallLog -Message "SMTP encryption: STARTTLS" -Level INFO
+                    }
+                    '2' {
+                        $smtpUseSsl = $true
+                        $smtpUseStartTls = $false
+                        Write-InstallLog -Message "SMTP encryption: SSL/TLS" -Level INFO
+                    }
+                    '3' {
+                        $smtpUseSsl = $false
+                        $smtpUseStartTls = $false
+                        Write-Host "WARNING: Unencrypted SMTP is not recommended" -ForegroundColor Yellow
+                        Write-InstallLog -Message "SMTP encryption: None (unencrypted)" -Level WARNING
+                    }
+                    default {
+                        $smtpUseSsl = $false
+                        $smtpUseStartTls = $true
+                        Write-Host "Invalid selection, using STARTTLS (default)" -ForegroundColor Yellow
+                    }
+                }
+
+                # Email Addresses
+                Write-Host ""
+                Write-Host "Email Address Configuration" -ForegroundColor Cyan
+                Write-Host "=========================================" -ForegroundColor Cyan
+                Write-Host ""
+
+                # From Address
+                while ([string]::IsNullOrWhiteSpace($emailFrom)) {
+                    $emailFrom = Read-Host "From email address"
+                    if ([string]::IsNullOrWhiteSpace($emailFrom)) {
+                        Write-Host "ERROR: From address is required" -ForegroundColor Red
+                    }
+                }
+
+                # To Address(es)
+                while ([string]::IsNullOrWhiteSpace($emailTo)) {
+                    Write-Host "To email address(es) - separate multiple addresses with commas" -ForegroundColor Gray
+                    $emailTo = Read-Host "To email address(es)"
+                    if ([string]::IsNullOrWhiteSpace($emailTo)) {
+                        Write-Host "ERROR: At least one recipient is required" -ForegroundColor Red
+                    }
+                }
+
+                # Subject (optional - has default)
+                Write-Host ""
+                $subjectInput = Read-Host "Email subject [Cisco Tech-Support Collection Report]"
+                if (-not [string]::IsNullOrWhiteSpace($subjectInput)) {
+                    $emailSubject = $subjectInput
+                }
+
+                # SMTP Authentication
+                Write-Host ""
+                Write-Host "SMTP Authentication" -ForegroundColor Cyan
+                Write-Host "=========================================" -ForegroundColor Cyan
+                Write-Host ""
+                Write-Host "Does your SMTP server require authentication?" -ForegroundColor Cyan
+                $authResponse = Read-Host "(yes/no) [yes]"
+                if ([string]::IsNullOrWhiteSpace($authResponse)) { $authResponse = 'yes' }
+
+                if ($authResponse -match '^y(es)?$|^Y(ES)?$') {
+                    # Get SMTP credentials
+                    Write-Host ""
+                    $smtpUsername = Read-Host "SMTP username"
+
+                    if ([string]::IsNullOrWhiteSpace($smtpUsername)) {
+                        Write-Host "WARNING: SMTP username is required for authentication" -ForegroundColor Yellow
+                        Write-Host "Email notifications will be disabled" -ForegroundColor Yellow
+                        $enableEmail = $false
+                    }
+                    else {
+                        $smtpPassword = Read-Host "SMTP password" -AsSecureString
+
+                        # Create SMTP credential file using the service account
+                        Write-Host ""
+                        Write-Host "Creating encrypted SMTP credential file..." -ForegroundColor Cyan
+
+                        $smtpCredSetupSuccess = Start-SMTPCredentialSetup -ServiceAccountCred $serviceAccountCred `
+                                                                          -InstallPath $InstallPath `
+                                                                          -SMTPUsername $smtpUsername `
+                                                                          -SMTPPassword $smtpPassword
+
+                        if (-not $smtpCredSetupSuccess) {
+                            Write-Host ""
+                            Write-Host ("=" * 80) -ForegroundColor Yellow
+                            Write-Host "SMTP CREDENTIAL SETUP FAILED" -ForegroundColor Yellow
+                            Write-Host ("=" * 80) -ForegroundColor Yellow
+                            Write-Host ""
+                            Write-Host "Email notifications will be disabled for this installation." -ForegroundColor Yellow
+                            Write-Host "You can manually configure SMTP credentials later by running:" -ForegroundColor White
+                            Write-Host "  Start-SMTPCredentialSetup function from this script" -ForegroundColor Gray
+                            Write-Host ""
+                            $enableEmail = $false
+                        }
+                        else {
+                            $emailConfigured = $true
+                            Write-InstallLog -Message "Email notifications enabled successfully" -Level SUCCESS
+                        }
+                    }
+                }
+                else {
+                    # No authentication required
+                    Write-Host "SMTP authentication disabled" -ForegroundColor Yellow
+                    Write-InstallLog -Message "SMTP configured without authentication" -Level INFO
+                    $emailConfigured = $true
+                }
+
+                # Summary
+                if ($emailConfigured) {
+                    Write-Host ""
+                    Write-Host "Email Configuration Summary" -ForegroundColor Green
+                    Write-Host "=========================================" -ForegroundColor Green
+                    Write-Host "  SMTP Server: $smtpServer`:$smtpPort" -ForegroundColor Gray
+                    Write-Host "  Encryption: $(if ($smtpUseSsl) { 'SSL/TLS' } elseif ($smtpUseStartTls) { 'STARTTLS' } else { 'None' })" -ForegroundColor Gray
+                    Write-Host "  From: $emailFrom" -ForegroundColor Gray
+                    Write-Host "  To: $emailTo" -ForegroundColor Gray
+                    Write-Host "  Subject: $emailSubject" -ForegroundColor Gray
+                    if ($smtpCredSetupSuccess) {
+                        Write-Host "  Authentication: Enabled (credentials encrypted)" -ForegroundColor Gray
+                    }
+                    else {
+                        Write-Host "  Authentication: Disabled" -ForegroundColor Gray
+                    }
+                    Write-Host ""
+                }
+            }
+            else {
+                Write-Host "Email notifications disabled" -ForegroundColor Yellow
+                Write-InstallLog -Message "User declined email notifications" -Level INFO
             }
         }
 
