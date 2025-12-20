@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cisco Tech-Support Collection Report</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background-color: #f5f5f5;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .header {
+            background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 8px 8px 0 0;
+        }
+
+        .header h1 {
+            margin: 0;
+            font-size: 24px;
+        }
+
+        .header .subtitle {
+            opacity: 0.9;
+            margin-top: 5px;
+            font-size: 14px;
+        }
+
+        .audit-section {
+            background-color: #f8fafc;
+            border: 1px solid #e2e8f0;
+            padding: 15px;
+            margin: 20px 30px;
+            border-radius: 4px;
+            font-size: 11px;
+            color: #475569;
+        }
+
+        .audit-section .label {
+            font-weight: 600;
+            color: #1e293b;
+            margin-bottom: 10px;
+            display: block;
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+
+        .audit-section table {
+            width: 100%;
+            font-size: 11px;
+            margin-top: 10px;
+        }
+
+        .audit-section table td {
+            padding: 4px 8px;
+        }
+
+        .audit-section table td:first-child {
+            width: 25%;
+            font-weight: 600;
+            color: #1e293b;
+        }
+
+        .summary {
+            padding: 30px;
+        }
+
+        .summary h2 {
+            color: #1e293b;
+            margin-top: 0;
+            font-size: 20px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+
+        .stat-card {
+            background: #f8fafc;
+            border-left: 4px solid #3b82f6;
+            padding: 15px;
+            border-radius: 4px;
+        }
+
+        .stat-card.success {
+            border-left-color: #10b981;
+        }
+
+        .stat-card.warning {
+            border-left-color: #f59e0b;
+        }
+
+        .stat-card.error {
+            border-left-color: #ef4444;
+        }
+
+        .stat-number {
+            font-size: 32px;
+            font-weight: bold;
+            color: #1e293b;
+        }
+
+        .stat-label {
+            color: #64748b;
+            font-size: 12px;
+            text-transform: uppercase;
+            margin-top: 5px;
+        }
+
+        .details-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+
+        .details-table th {
+            background-color: #f1f5f9;
+            padding: 12px;
+            text-align: left;
+            font-size: 12px;
+            text-transform: uppercase;
+            color: #475569;
+        }
+
+        .details-table td {
+            padding: 12px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .status-success {
+            background-color: #d1fae5;
+            color: #065f46;
+        }
+
+        .status-failed {
+            background-color: #fee2e2;
+            color: #991b1b;
+        }
+
+        .status-offline {
+            background-color: #fef3c7;
+            color: #92400e;
+        }
+
+        .footer {
+            background-color: #f8fafc;
+            padding: 20px;
+            text-align: center;
+            font-size: 11px;
+            color: #64748b;
+            border-radius: 0 0 8px 8px;
+            line-height: 1.6;
+        }
+
+        .attachment-notice {
+            background-color: #eff6ff;
+            border: 1px solid #bfdbfe;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 20px 0;
+        }
+
+        .failure-list {
+            background-color: #fef2f2;
+            border: 1px solid #fecaca;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 15px 0;
+        }
+
+        .failure-list ul {
+            margin: 10px 0;
+            padding-left: 20px;
+        }
+
+        .failure-list li {
+            margin: 5px 0;
+            color: #991b1b;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔧 Cisco Tech-Support Collection Report</h1>
+            <div class="subtitle">{{ collection_date }} | {{ collection_mode }} Mode</div>
+        </div>
+
+        <!-- Audit Information Section -->
+        <div class="audit-section">
+            <span class="label">AUDIT INFORMATION</span>
+            <table>
+                <tr>
+                    <td>Report Generated (UTC):</td>
+                    <td>{{ report_timestamp }}</td>
+                    <td>Script Version:</td>
+                    <td>{{ script_version }}</td>
+                </tr>
+                <tr>
+                    <td>Executed By:</td>
+                    <td>{{ executed_by_user }}</td>
+                    <td>Execution Host:</td>
+                    <td>{{ execution_hostname }}</td>
+                </tr>
+                <tr>
+                    <td>Host IP Address:</td>
+                    <td>{{ host_ip_address }}</td>
+                    <td>Domain:</td>
+                    <td>{{ domain }}</td>
+                </tr>
+                <tr>
+                    <td>Working Directory:</td>
+                    <td colspan="3">{{ working_directory }}</td>
+                </tr>
+                <tr>
+                    <td>Collection Start:</td>
+                    <td>{{ start_timestamp }}</td>
+                    <td>Collection End:</td>
+                    <td>{{ end_timestamp }}</td>
+                </tr>
+                <tr>
+                    <td>Total Duration:</td>
+                    <td>{{ duration }}</td>
+                    <td>Collection Mode:</td>
+                    <td>{{ collection_mode }}</td>
+                </tr>
+            </table>
+        </div>
+
+        <div class="summary">
+            <h2>Executive Summary</h2>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-number">{{ total_devices }}</div>
+                    <div class="stat-label">Total Devices</div>
+                </div>
+                <div class="stat-card success">
+                    <div class="stat-number">{{ successful }}</div>
+                    <div class="stat-label">Successful</div>
+                </div>
+                <div class="stat-card error">
+                    <div class="stat-number">{{ failed }}</div>
+                    <div class="stat-label">Failed</div>
+                </div>
+                <div class="stat-card warning">
+                    <div class="stat-number">{{ offline }}</div>
+                    <div class="stat-label">Offline</div>
+                </div>
+            </div>
+
+            <h3>Collection Details</h3>
+            <table class="details-table">
+                <tr>
+                    <th>Metric</th>
+                    <th>Value</th>
+                </tr>
+                <tr>
+                    <td>Start Time (UTC)</td>
+                    <td>{{ start_timestamp }}</td>
+                </tr>
+                <tr>
+                    <td>End Time (UTC)</td>
+                    <td>{{ end_timestamp }}</td>
+                </tr>
+                <tr>
+                    <td>Duration</td>
+                    <td>{{ duration }}</td>
+                </tr>
+                <tr>
+                    <td>Collection Mode</td>
+                    <td>{{ collection_mode }}</td>
+                </tr>
+                <tr>
+                    <td>Output Directory</td>
+                    <td>{{ output_directory }}</td>
+                </tr>
+                <tr>
+                    <td>Success Rate</td>
+                    <td>{{ success_rate }}%</td>
+                </tr>
+            </table>
+
+            {% if top_failures|length > 0 %}
+            <h3>Top Failure Reasons</h3>
+            <div class="failure-list">
+                <ul>
+                    {% for reason in top_failures %}
+                    <li>{{ reason }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+
+            <div class="attachment-notice">
+                <strong>📎 Detailed Report Attached</strong><br>
+                A comprehensive device-by-device breakdown is included as an attachment to this email.
+            </div>
+        </div>
+
+        <div class="footer">
+            <strong>Cisco Tech-Support Collector</strong> v{{ script_version }}<br>
+            Report Generated: {{ report_timestamp_long }}<br>
+            Executed By: {{ executed_by_user }}@{{ execution_hostname }} ({{ host_ip_address }})<br>
+            <br>
+            <em style="font-size: 10px;">
+                This report was automatically generated for network compliance and audit purposes.<br>
+                Retain this report in accordance with organizational data retention policies.
+            </em>
+        </div>
+    </div>
+</body>
+</html>
