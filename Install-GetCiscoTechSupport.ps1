@@ -2535,7 +2535,60 @@ function Install-CiscoCollector {
         Write-LogSection "EXTRACTION"
         if (Test-Path $InstallPath) {
             Write-InstallLog -Message "Removing existing installation..." -Level INFO
+
+            # Handle credential file with restricted ACLs before directory removal
+            $credFile = "$InstallPath\.cisco_credentials"
+            if (Test-Path $credFile) {
+                try {
+                    Write-InstallLog -Message "Removing credential file: $credFile" -Level INFO -NoConsole
+
+                    # Try direct removal first
+                    try {
+                        Remove-Item -Path $credFile -Force -ErrorAction Stop
+                        Write-InstallLog -Message "Credential file removed (direct)" -Level SUCCESS -NoConsole
+                    }
+                    catch {
+                        # Use aggressive approach: takeown + ACL reset
+                        Write-InstallLog -Message "Direct removal failed, using takeown/icacls" -Level INFO -NoConsole
+
+                        $takeownOutput = & takeown.exe /F $credFile /A 2>&1
+                        Write-InstallLog -Message "takeown: $takeownOutput" -Level INFO -NoConsole
+
+                        $icaclsOutput = & icacls.exe $credFile /reset 2>&1
+                        Write-InstallLog -Message "icacls reset: $icaclsOutput" -Level INFO -NoConsole
+
+                        $icaclsOutput = & icacls.exe $credFile /grant "Administrators:(F)" 2>&1
+                        Write-InstallLog -Message "icacls grant: $icaclsOutput" -Level INFO -NoConsole
+
+                        Start-Sleep -Milliseconds 500
+                        Remove-Item -Path $credFile -Force -ErrorAction Stop
+                        Write-InstallLog -Message "Credential file removed (after ACL reset)" -Level SUCCESS -NoConsole
+                    }
+                }
+                catch {
+                    Write-InstallLog -Message "Could not remove credential file, attempting directory-level removal: $_" -Level WARNING -NoConsole
+                }
+            }
+
+            # Use takeown and icacls on entire directory for reliable removal
+            try {
+                $takeownOutput = & takeown.exe /F $InstallPath /R /A /D Y 2>&1
+                Write-InstallLog -Message "Directory takeown completed" -Level INFO -NoConsole
+
+                $icaclsOutput = & icacls.exe $InstallPath /reset /T /C /Q 2>&1
+                Write-InstallLog -Message "Directory ACL reset completed" -Level INFO -NoConsole
+
+                $icaclsOutput = & icacls.exe $InstallPath /grant "Administrators:(OI)(CI)F" /T /C /Q 2>&1
+                Write-InstallLog -Message "Directory permissions granted" -Level INFO -NoConsole
+
+                Start-Sleep -Milliseconds 1000
+            }
+            catch {
+                Write-InstallLog -Message "ACL modification warning: $_" -Level WARNING -NoConsole
+            }
+
             Remove-Item -Path $InstallPath -Recurse -Force
+            Write-InstallLog -Message "Existing installation removed" -Level SUCCESS
         }
         
         New-Item -Path $InstallPath -ItemType Directory -Force | Out-Null
