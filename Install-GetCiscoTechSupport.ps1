@@ -287,7 +287,7 @@ $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $script:LogFile = Join-Path $logDirectory "$logBaseName-$timestamp$logExtension"
 $script:TaskName = "Cisco Tech-Support Collector"
 $script:PythonSubfolder = "Python3"
-$script:RequiredPackages = @('netmiko', 'pysnmp', 'cryptography')
+$script:RequiredPackages = @('netmiko', 'pysnmp', 'cryptography', 'jinja2')
 $script:PythonScriptName = 'get-ciscotechsupport.py'
 #endregion
 
