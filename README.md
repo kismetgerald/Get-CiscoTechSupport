@@ -25,12 +25,21 @@ Visit the [Releases](../../releases) page and download:
 - `Install-GetCiscoTechSupport_vX.X.X.ps1` (installer)
 - `Get-CiscoTechSupport.zip` (application archive)
 
+Now, place both files into the same folder (e.g., `C:\Temp\Install-GetCiscoTechSupport`)
+
 ### 2. Install
 
 ```powershell
 # Open PowerShell as Administrator
-cd "C:\Temp"
+cd "C:\Temp\Install-GetCiscoTechSupport"
 .\Install-GetCiscoTechSupport_vX.X.X.ps1 -ArchivePath .\Get-CiscoTechSupport.zip
+```
+
+If you want to install to a different location, pass the -InstallPath parameter (like this):
+```powershell
+# Open PowerShell as Administrator
+cd "C:\Temp\Install-GetCiscoTechSupport"
+.\Install-GetCiscoTechSupport_vX.X.X.ps1 -ArchivePath .\Get-CiscoTechSupport.zip -InstallPath "C:\Admin\Scripts\Get-CiscoTechSupport"
 ```
 
 ### 3. Configure via Interactive Prompts
@@ -43,7 +52,7 @@ The installer guides you through:
 - **Email notifications** (optional)
 - **Evaluate-STIG integration** (optional)
 
-### 4. Setup Credentials
+### 4. Setup Credentials (necessary, only if, you decline to have the installation script set it up)
 
 After installation, configure device credentials as the service account:
 
