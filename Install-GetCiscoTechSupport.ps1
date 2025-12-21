@@ -1362,9 +1362,9 @@ function Start-SMTPCredentialSetup {
     )
 
     Write-Host ""
-    Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host ("=" * 59) -ForegroundColor Cyan
     Write-Host "  SMTP Credential Setup" -ForegroundColor Cyan
-    Write-Host "═══════════════════════════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host ("=" * 59) -ForegroundColor Cyan
     Write-Host ""
 
     $credFile = Join-Path $InstallPath ".smtp_credentials"
