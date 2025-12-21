@@ -3658,12 +3658,12 @@ function Install-CiscoCollector {
         $stigTaskCreated = $false
         $stigTaskName = $null
 
-        if ($EnableEvaluateSTIG -or (-not $PSBoundParameters.ContainsKey('EnableEvaluateSTIG') -and -not $SkipTaskCreation)) {
+        if ($EnableEvaluateSTIG -or (-not $script:ScriptBoundParameters.ContainsKey('EnableEvaluateSTIG') -and -not $SkipTaskCreation)) {
             Write-Host ""
             Write-LogSection "EVALUATE-STIG INTEGRATION"
 
             # Interactive prompt if not specified via parameter
-            if (-not $PSBoundParameters.ContainsKey('EnableEvaluateSTIG')) {
+            if (-not $script:ScriptBoundParameters.ContainsKey('EnableEvaluateSTIG')) {
                 Write-Host ""
                 Write-Host "Evaluate-STIG can automatically generate STIG checklists from collected tech-support files." -ForegroundColor Cyan
                 Write-Host ""
@@ -3783,7 +3783,7 @@ function Install-CiscoCollector {
                         }
 
                         # Interactive prompts for device type if not specified
-                        if (-not $PSBoundParameters.ContainsKey('EvaluateSTIGDeviceType')) {
+                        if (-not $script:ScriptBoundParameters.ContainsKey('EvaluateSTIGDeviceType')) {
                             Write-Host ""
                             Write-Host "Select device types to scan for STIG compliance:" -ForegroundColor Cyan
                             Write-Host "  1. Router only" -ForegroundColor White
@@ -4081,6 +4081,9 @@ function Install-CiscoCollector {
 #endregion
 
 #region Script Execution
+# Capture script-level bound parameters for use inside functions
+$script:ScriptBoundParameters = $PSBoundParameters
+
 try {
     if ($Uninstall) {
         Uninstall-CiscoCollector
