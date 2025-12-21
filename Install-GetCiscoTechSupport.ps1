@@ -3517,7 +3517,7 @@ function Install-CiscoCollector {
             $smtpCredSetupSuccess = $false
 
             # Check if email was enabled via parameter
-            $emailEnabledViaParam = $PSBoundParameters.ContainsKey('EnableEmail') -and $EnableEmail
+            $emailEnabledViaParam = $script:ScriptBoundParameters.ContainsKey('EnableEmail') -and $EnableEmail
 
             if (-not $SkipTaskCreation -and $ScheduleType -ne 'None') {
                 # Only prompt if not already configured via parameters
