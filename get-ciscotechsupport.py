@@ -1412,7 +1412,7 @@ def generate_html_email_body(summary):
     try:
         # Get script directory and template path
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        template_dir = os.path.join(script_dir, 'templates')
+        template_dir = os.path.join(script_dir, 'Templates')
 
         if not os.path.exists(template_dir):
             logging.error(f"Template directory not found: {template_dir}")
