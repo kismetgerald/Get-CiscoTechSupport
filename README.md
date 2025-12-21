@@ -121,14 +121,20 @@ Configured during installation or via installer parameters:
 ```
 C:\Scripts\Get-CiscoTechSupport\
 ├── Results\
-│   ├── YYYY-MM-DD\
-│   │   └── DEVICE_tech-support_YYYY-MM-DD_HHmmss.txt
+│   ├── DEVICE01_tech-support_2025-12-18_030001.txt
+│   ├── DEVICE02_tech-support_2025-12-18_030245.txt
 │   └── STIG_Checklists\          (if Evaluate-STIG enabled)
+│       ├── DEVICE01.cklb
+│       └── Combined_Summary.xlsx
 ├── Logs\
-│   └── collection_YYYY-MM-DD.log
+│   ├── Get-CiscoTechSupport_2025-12-18.log
+│   └── Get-CiscoTechSupport_2025-12-17.log
 ├── devices.txt                     (Device List mode)
 ├── .cisco_credentials              (encrypted)
 └── .smtp_credentials               (encrypted, if email enabled)
+
+C:\Logs\
+└── Get-CiscoTechSupport-Install_20251218-143022.log
 ```
 
 ## Advanced Installation
@@ -154,6 +160,28 @@ $cred = Get-Credential  # Service account
     -EvaluateSTIGPath "C:\STIGS\Evaluate-STIG\Evaluate-STIG.ps1" `
     -EvaluateSTIGScheduleDay 1 `
     -EvaluateSTIGScheduleTime "04:00"
+```
+
+### With STIG Integration and Email Notification
+
+```powershell
+$svcAcctCred = Get-Credential -Message "Enter service account credentials"
+$smtpCred = Get-Credential -Message "Enter SMTP credentials"
+.\Install-GetCiscoTechSupport.ps1 `
+    -ArchivePath ".\Get-CiscoTechSupport.zip" `
+    -ServiceAccountCredential $svcAcctCred `
+    -EnableEvaluateSTIG `
+    -EvaluateSTIGPath "C:\STIGS\Evaluate-STIG\Evaluate-STIG.ps1" `
+    -EvaluateSTIGScheduleDay 1 `
+    -EvaluateSTIGScheduleTime "04:00" `
+    -EnableEmail `
+    -SMTPServer "smtp.example.com" `
+    -SMTPPort 587 `
+    -SMTPUseStartTLS `
+    -EmailFrom "cisco-collector@example.com" `
+    -EmailTo "netadmin@example.com,noc@example.com" `
+    -EmailSubject "Cisco Collection Report" `
+    -SMTPCredential $smtpCred
 ```
 
 ### Multiple Collection Modes
