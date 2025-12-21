@@ -1420,8 +1420,7 @@ function Start-SMTPCredentialSetup {
         Write-Host "  SMTP Username: $SMTPUsername" -ForegroundColor Gray
         Write-Host ""
 
-        # Convert SecureString password to plaintext for RunAs (required for credential creation)
-        $serviceAccountPassword = $ServiceAccountCred.GetNetworkCredential().Password
+        # Convert SecureString password to plaintext for embedding in script
         $smtpPasswordPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
             [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SMTPPassword)
         )
@@ -1430,74 +1429,111 @@ function Start-SMTPCredentialSetup {
         $credSetupScript = @"
 `$ErrorActionPreference = 'Stop'
 
-# Create PSCredential object for SMTP
-`$securePassword = ConvertTo-SecureString '$smtpPasswordPlain' -AsPlainText -Force
-`$smtpCred = New-Object System.Management.Automation.PSCredential('$SMTPUsername', `$securePassword)
+try {
+    Write-Host ''
+    Write-Host 'SMTP Credential Setup' -ForegroundColor Cyan
+    Write-Host ('=' * 60) -ForegroundColor Cyan
+    Write-Host ''
+    Write-Host 'Service Account: $($ServiceAccountCred.UserName)' -ForegroundColor White
+    Write-Host 'SMTP Username: $SMTPUsername' -ForegroundColor White
+    Write-Host ''
+    Write-Host 'Creating encrypted credential file...' -ForegroundColor Cyan
 
-# Export credential using Export-Clixml (encrypts with DPAPI)
-`$smtpCred | Export-Clixml -Path '$credFile' -Force
+    # Create PSCredential object for SMTP
+    `$securePassword = ConvertTo-SecureString '$smtpPasswordPlain' -AsPlainText -Force
+    `$smtpCred = New-Object System.Management.Automation.PSCredential('$SMTPUsername', `$securePassword)
 
-# Verify the file was created
-if (Test-Path '$credFile') {
-    `$fileInfo = Get-Item '$credFile'
-    Write-Output "SUCCESS: Credential file created (`$(`$fileInfo.Length) bytes)"
-    exit 0
-} else {
-    Write-Output "ERROR: Credential file was not created"
+    # Export credential using Export-Clixml (encrypts with DPAPI)
+    `$smtpCred | Export-Clixml -Path '$credFile' -Force
+
+    # Verify the file was created
+    if (Test-Path '$credFile') {
+        `$fileInfo = Get-Item '$credFile'
+        Write-Host ''
+        Write-Host 'SUCCESS: Credential file created' -ForegroundColor Green
+        Write-Host "Location: $credFile" -ForegroundColor Gray
+        Write-Host "Size: `$(`$fileInfo.Length) bytes" -ForegroundColor Gray
+        exit 0
+    } else {
+        Write-Host ''
+        Write-Host 'ERROR: Credential file was not created' -ForegroundColor Red
+        exit 1
+    }
+}
+catch {
+    Write-Host ''
+    Write-Host 'ERROR: An exception occurred' -ForegroundColor Red
+    Write-Host "Error: `$_" -ForegroundColor Red
     exit 1
 }
+
+Write-Host ''
+Write-Host 'Press Enter to close this window...' -ForegroundColor Cyan
+Read-Host
 "@
 
-        # Save the script to a temporary file
-        $tempScriptPath = Join-Path $env:TEMP "smtp_cred_setup_$([guid]::NewGuid()).ps1"
-        $credSetupScript | Out-File -FilePath $tempScriptPath -Encoding UTF8 -Force
-        Write-InstallLog -Message "Created temporary credential setup script: $tempScriptPath" -Level INFO -NoConsole
+        # Use SystemDrive\Temp (shared system directory) instead of $env:TEMP (user-specific)
+        $tempScriptPath = Join-Path $env:SystemDrive\Temp "smtp_cred_setup_$([guid]::NewGuid()).ps1"
+
+        # Ensure SystemDrive\Temp exists
+        $systemTempDir = Join-Path $env:SystemDrive "Temp"
+        if (-not (Test-Path $systemTempDir)) {
+            New-Item -Path $systemTempDir -ItemType Directory -Force | Out-Null
+        }
 
         try {
-            # Execute the script as the service account using RunAs
-            Write-Host "Executing credential setup as service account..." -ForegroundColor Cyan
-            Write-Host "(You may see a credential prompt window - this is expected)" -ForegroundColor Gray
+            Set-Content -Path $tempScriptPath -Value $credSetupScript -Force
+            Write-InstallLog -Message "Created temporary credential setup script: $tempScriptPath" -Level INFO -NoConsole
+
+            # Prompt for service account password (similar to Cisco credential setup)
+            Write-Host "A new PowerShell window will open to create the SMTP credential file." -ForegroundColor Yellow
             Write-Host ""
+            Write-Host "Enter password for service account: $($ServiceAccountCred.UserName)" -ForegroundColor Cyan
+            $userPassword = Read-Host -AsSecureString
 
-            $processArgs = @(
-                "/user:$($ServiceAccountCred.UserName)",
-                "powershell.exe -ExecutionPolicy Bypass -NoProfile -File `"$tempScriptPath`""
-            )
-
-            $processInfo = New-Object System.Diagnostics.ProcessStartInfo
-            $processInfo.FileName = "runas.exe"
-            $processInfo.Arguments = $processArgs -join ' '
-            $processInfo.UseShellExecute = $false
-            $processInfo.RedirectStandardInput = $true
-            $processInfo.RedirectStandardOutput = $true
-            $processInfo.RedirectStandardError = $true
-            $processInfo.CreateNoWindow = $true
-
-            $process = New-Object System.Diagnostics.Process
-            $process.StartInfo = $processInfo
-
-            $null = $process.Start()
-
-            # Send the password to runas via stdin
-            $process.StandardInput.WriteLine($serviceAccountPassword)
-            $process.StandardInput.Close()
-
-            # Capture output
-            $output = $process.StandardOutput.ReadToEnd()
-            $errors = $process.StandardError.ReadToEnd()
-
-            $process.WaitForExit(30000)  # 30 second timeout
-
-            if ($process.ExitCode -ne 0) {
-                Write-Host "ERROR: Credential setup failed" -ForegroundColor Red
-                Write-Host "Exit Code: $($process.ExitCode)" -ForegroundColor Red
-                if ($output) { Write-Host "Output: $output" -ForegroundColor Gray }
-                if ($errors) { Write-Host "Errors: $errors" -ForegroundColor Red }
-                Write-InstallLog -Message "Credential setup failed with exit code $($process.ExitCode)" -Level ERROR
+            if ($userPassword.Length -eq 0) {
+                Write-Host "Password cannot be empty" -ForegroundColor Red
+                Write-InstallLog -Message "SMTP credential setup cancelled - no password provided" -Level WARNING
                 return $false
             }
 
-            Write-InstallLog -Message "Credential setup script executed successfully" -Level INFO -NoConsole
+            $tempCred = New-Object System.Management.Automation.PSCredential($ServiceAccountCred.UserName, $userPassword)
+
+            Write-Host ""
+            Write-Host "Launching SMTP credential setup window..." -ForegroundColor Cyan
+
+            $processParams = @{
+                FilePath = "powershell.exe"
+                ArgumentList = @(
+                    "-NoProfile"
+                    "-ExecutionPolicy", "Bypass"
+                    "-File", "`"$tempScriptPath`""
+                )
+                Credential = $tempCred
+                Wait = $true
+                WindowStyle = "Normal"
+                ErrorAction = "Stop"
+            }
+
+            Start-Process @processParams
+
+            Write-Host ""
+            Write-Host "SMTP credential setup window closed" -ForegroundColor Green
+            Write-InstallLog -Message "SMTP credential setup completed successfully" -Level SUCCESS
+        }
+        catch {
+            if ($_.Exception.Message -like "*password*" -or $_.Exception.Message -like "*1326*") {
+                Write-Host ""
+                Write-Host "ERROR: Incorrect password for $($ServiceAccountCred.UserName)" -ForegroundColor Red
+                Write-InstallLog -Message "Password authentication failed for SMTP credential setup" -Level ERROR
+            }
+            else {
+                Write-Host ""
+                Write-Host "ERROR: Failed to launch credential setup" -ForegroundColor Red
+                Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
+                Write-InstallLog -Message "Failed to launch SMTP credential setup: $($_.Exception.Message)" -Level ERROR
+            }
+            return $false
         }
         finally {
             # Clean up the temporary script
