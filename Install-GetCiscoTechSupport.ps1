@@ -1328,7 +1328,7 @@ function Start-SMTPCredentialSetup {
 
     .DESCRIPTION
         Creates an encrypted credential file (.smtp_credentials) in the installation directory
-        that stores SMTP username and password. Uses RunAs with the service account to ensure
+        that stores SMTP username and password. Uses Start-Process with the service account to ensure
         the credentials are encrypted with the service account's DPAPI keys.
 
     .PARAMETER ServiceAccountCred
@@ -1337,11 +1337,8 @@ function Start-SMTPCredentialSetup {
     .PARAMETER InstallPath
         Installation directory where the credential file will be created
 
-    .PARAMETER SMTPUsername
-        SMTP username for authentication
-
-    .PARAMETER SMTPPassword
-        SecureString containing the SMTP password
+    .PARAMETER SMTPCredential
+        PSCredential object containing SMTP username and password for authentication
 
     .RETURNS
         Boolean indicating success or failure
@@ -1355,10 +1352,7 @@ function Start-SMTPCredentialSetup {
         [string]$InstallPath,
 
         [Parameter(Mandatory = $true)]
-        [string]$SMTPUsername,
-
-        [Parameter(Mandatory = $true)]
-        [SecureString]$SMTPPassword
+        [PSCredential]$SMTPCredential
     )
 
     Write-Host ""
@@ -1369,6 +1363,10 @@ function Start-SMTPCredentialSetup {
 
     $credFile = Join-Path $InstallPath ".smtp_credentials"
     Write-InstallLog -Message "Starting SMTP credential setup: $credFile" -Level INFO
+
+    # Extract SMTP credentials
+    $smtpUsername = $SMTPCredential.UserName
+    $smtpPassword = $SMTPCredential.Password
 
     # Check for existing credential file
     if (Test-Path $credFile) {
@@ -3631,14 +3629,16 @@ function Install-CiscoCollector {
                     else {
                         $smtpPassword = Read-Host "SMTP password" -AsSecureString
 
+                        # Create PSCredential object for SMTP
+                        $smtpCredential = New-Object System.Management.Automation.PSCredential($smtpUsername, $smtpPassword)
+
                         # Create SMTP credential file using the service account
                         Write-Host ""
                         Write-Host "Creating encrypted SMTP credential file..." -ForegroundColor Cyan
 
                         $smtpCredSetupSuccess = Start-SMTPCredentialSetup -ServiceAccountCred $serviceAccountCred `
                                                                           -InstallPath $InstallPath `
-                                                                          -SMTPUsername $smtpUsername `
-                                                                          -SMTPPassword $smtpPassword
+                                                                          -SMTPCredential $smtpCredential
 
                         if (-not $smtpCredSetupSuccess) {
                             Write-Host ""
