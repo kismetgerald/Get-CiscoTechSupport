@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - SMTP credential setup function parameter alignment
 - Email configuration ordering bug - moved email config before task creation to ensure parameters are included in scheduled task
+- Missing instance variables in CiscoCollector class causing AttributeError during email notifications
+- -EnableEmail parameter not being honored in non-interactive mode (installer now checks $script:ScriptBoundParameters)
 
 ## [0.0.5] - 2025-12-21
 
