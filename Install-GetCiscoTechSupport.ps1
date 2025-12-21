@@ -1300,25 +1300,23 @@ Read-Host
             Write-Host "Securing credential file..." -ForegroundColor Cyan -NoNewline
 
             # Run ACL operations as a job so we can show progress
-            # Note: $credPath is a file path, not a password (PSScriptAnalyzer false positive)
             $secureJob = Start-Job -ScriptBlock {
                 param(
-                    [System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
-                    [string]$credPath,
+                    [string]$filePath,
                     [string]$serviceAccount
                 )
 
                 try {
-                    if (-not (Test-Path $credPath)) {
+                    if (-not (Test-Path $filePath)) {
                         return @{ Success = $false; Error = "File not found" }
                     }
 
                     # Set the hidden attribute
-                    $file = Get-Item $credPath -Force
+                    $file = Get-Item $filePath -Force
                     $file.Attributes = $file.Attributes -bor [System.IO.FileAttributes]::Hidden
 
                     # Get the current ACL
-                    $acl = Get-Acl -Path $credPath
+                    $acl = Get-Acl -Path $filePath
 
                     # Disable inheritance and remove inherited permissions
                     $acl.SetAccessRuleProtection($true, $false)
@@ -1345,10 +1343,10 @@ Read-Host
                     $acl.AddAccessRule($accessRule)
 
                     # Apply the modified ACL
-                    Set-Acl -Path $credPath -AclObject $acl
+                    Set-Acl -Path $filePath -AclObject $acl
 
                     # Verify the permissions
-                    $verifyAcl = Get-Acl -Path $credPath
+                    $verifyAcl = Get-Acl -Path $filePath
                     $serviceAccountAccess = $verifyAcl.Access | Where-Object {
                         $_.IdentityReference.Value -eq $serviceAccount -or
                         $_.IdentityReference.Value -like "*\$serviceAccount" -or
@@ -1679,25 +1677,23 @@ Read-Host
             Write-Host "Securing SMTP credential file..." -ForegroundColor Cyan -NoNewline
 
             # Run ACL operations as a job so we can show progress
-            # Note: $credPath is a file path, not a password (PSScriptAnalyzer false positive)
             $secureJob = Start-Job -ScriptBlock {
                 param(
-                    [System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
-                    [string]$credPath,
+                    [string]$filePath,
                     [string]$serviceAccount
                 )
 
                 try {
-                    if (-not (Test-Path $credPath)) {
+                    if (-not (Test-Path $filePath)) {
                         return @{ Success = $false; Error = "File not found" }
                     }
 
                     # Set the hidden attribute
-                    $file = Get-Item $credPath -Force
+                    $file = Get-Item $filePath -Force
                     $file.Attributes = $file.Attributes -bor [System.IO.FileAttributes]::Hidden
 
                     # Get the current ACL
-                    $acl = Get-Acl -Path $credPath
+                    $acl = Get-Acl -Path $filePath
 
                     # Disable inheritance and remove inherited permissions
                     $acl.SetAccessRuleProtection($true, $false)
@@ -1724,10 +1720,10 @@ Read-Host
                     $acl.AddAccessRule($accessRule)
 
                     # Apply the modified ACL
-                    Set-Acl -Path $credPath -AclObject $acl
+                    Set-Acl -Path $filePath -AclObject $acl
 
                     # Verify the permissions
-                    $verifyAcl = Get-Acl -Path $credPath
+                    $verifyAcl = Get-Acl -Path $filePath
                     $serviceAccountAccess = $verifyAcl.Access | Where-Object {
                         $_.IdentityReference.Value -eq $serviceAccount -or
                         $_.IdentityReference.Value -like "*\$serviceAccount" -or
