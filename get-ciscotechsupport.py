@@ -20,7 +20,7 @@
 #     December 4, 2025
 #
 # LAST UPDATED:
-#     December 20, 2025
+#     December 21, 2025
 #
 # DEPENDENCIES:
 #     - Python 3.6+
@@ -613,6 +613,10 @@ class CiscoCollector:
         except Exception as e:
             self.logger.error(f"Cannot create output directory {self.output_dir}: {e}")
             sys.exit(1)
+
+        # Initialize tracking variables for email notifications
+        self.results = []
+        self.start_time = None
     
     @staticmethod
     def get_default_output_dir():
@@ -1186,6 +1190,7 @@ class CiscoCollector:
                 result = future.result()
                 results.append(result)
         
+        self.results = results  # Store for email notifications
         return results
     
     # endregion
@@ -1909,6 +1914,9 @@ Examples:
         session_timeout=args.session_timeout,
         command_timeout=args.command_timeout
     )
+
+    # Capture start time for email reporting
+    collector.start_time = datetime.now(timezone.utc)
     
     print(f"Output directory: {collector.output_dir}")
     print(f"Log directory: {Path(collector.log_file).parent}")
