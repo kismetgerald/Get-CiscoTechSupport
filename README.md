@@ -52,7 +52,7 @@ The installer guides you through:
 - **Email notifications** (optional)
 - **Evaluate-STIG integration** (optional)
 
-### 4. Setup Credentials (necessary, only if, you decline to have the installation script set it up)
+### 4. Setup Credentials (_necessary, only if, you decline to have the installation script set it up_)
 
 After installation, configure device credentials as the service account:
 
@@ -142,7 +142,7 @@ C:\Logs\
 ### Silent Installation
 
 ```powershell
-$cred = Get-Credential  # Service account
+$svcAcctCred = Get-Credential -Message "Enter service account credentials"
 .\Install-GetCiscoTechSupport.ps1 `
     -ArchivePath ".\Get-CiscoTechSupport.zip" `
     -InstallPath "C:\Scripts\Get-CiscoTechSupport" `
@@ -154,6 +154,7 @@ $cred = Get-Credential  # Service account
 ### With STIG Integration
 
 ```powershell
+$svcAcctCred = Get-Credential -Message "Enter service account credentials"
 .\Install-GetCiscoTechSupport.ps1 `
     -ArchivePath ".\Get-CiscoTechSupport.zip" `
     -EnableEvaluateSTIG `
