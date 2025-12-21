@@ -120,6 +120,44 @@
 .PARAMETER EvaluateSTIGAllowDeprecated
     Allow scanning of deprecated STIGs no longer available on cyber.mil.
 
+.PARAMETER EnableEmail
+    Enable email notifications for collection reports.
+    When enabled, requires SMTPServer, EmailFrom, and EmailTo parameters.
+
+.PARAMETER SMTPServer
+    SMTP server hostname or IP address for sending email notifications.
+    Required when EnableEmail is specified.
+
+.PARAMETER SMTPPort
+    SMTP server port number.
+    Default: 587 (STARTTLS)
+    Common values: 25 (plain), 587 (STARTTLS), 465 (SSL)
+
+.PARAMETER SMTPUseSSL
+    Use SSL/TLS encryption (implicit SSL on port 465).
+    Cannot be used with SMTPUseStartTLS.
+
+.PARAMETER SMTPUseStartTLS
+    Use STARTTLS encryption (explicit TLS on port 587).
+    Cannot be used with SMTPUseSSL.
+
+.PARAMETER EmailFrom
+    Sender email address for notifications.
+    Required when EnableEmail is specified.
+
+.PARAMETER EmailTo
+    Recipient email address(es) for notifications.
+    For multiple recipients, separate with commas.
+    Required when EnableEmail is specified.
+
+.PARAMETER EmailSubject
+    Custom email subject line.
+    Default: "Cisco Tech-Support Collection Report - [Date]"
+
+.PARAMETER SMTPCredential
+    PSCredential object containing SMTP username and password for authentication.
+    Optional - only required if SMTP server requires authentication.
+
 .PARAMETER Uninstall
     Uninstall the Cisco Tech-Support Collector and remove all components
 
@@ -163,6 +201,21 @@
 
     Installs with customized Evaluate-STIG integration.
     Saves checklists to D:\STIG_Results and runs on the 15th of each month at 02:00.
+
+.EXAMPLE
+    $smtpCred = Get-Credential -Message "Enter SMTP credentials"
+    .\Install-GetCiscoTechSupport.ps1 -ArchivePath ".\Get-CiscoTechSupport.zip" `
+        -EnableEmail `
+        -SMTPServer "smtp.example.com" `
+        -SMTPPort 587 `
+        -SMTPUseStartTLS `
+        -EmailFrom "cisco-collector@example.com" `
+        -EmailTo "netadmin@example.com,noc@example.com" `
+        -EmailSubject "Cisco Collection Report" `
+        -SMTPCredential $smtpCred
+
+    Installs with email notifications enabled.
+    Sends HTML reports to multiple recipients using STARTTLS authentication.
 
 .NOTES
     Author: Kismet Agbasi (Github: kismetgerald Email: KismetG17@gmail.com)
@@ -273,6 +326,35 @@ param(
 
     [Parameter(Mandatory = $false, ParameterSetName='Install')]
     [switch]$EvaluateSTIGAllowDeprecated,
+
+    # Email Notification Parameters
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
+    [switch]$EnableEmail,
+
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
+    [string]$SMTPServer,
+
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
+    [ValidateRange(1,65535)]
+    [int]$SMTPPort = 587,
+
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
+    [switch]$SMTPUseSSL,
+
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
+    [switch]$SMTPUseStartTLS,
+
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
+    [string]$EmailFrom,
+
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
+    [string]$EmailTo,
+
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
+    [string]$EmailSubject,
+
+    [Parameter(Mandatory = $false, ParameterSetName='Install')]
+    [PSCredential]$SMTPCredential,
 
     [Parameter(Mandatory = $true, ParameterSetName='Uninstall')]
     [switch]$Uninstall
@@ -3490,178 +3572,259 @@ function Install-CiscoCollector {
         }
 
         # Email Notification Configuration
+        # Initialize variables from parameters or set defaults
         $emailConfigured = $false
-        $smtpServer = $null
-        $smtpPort = 587
-        $smtpUseSsl = $false
-        $smtpUseStartTls = $true
-        $emailFrom = $null
-        $emailTo = $null
-        $emailSubject = "Cisco Tech-Support Collection Report"
+        $smtpServer = $SMTPServer
+        $smtpPort = if ($PSBoundParameters.ContainsKey('SMTPPort')) { $SMTPPort } else { 587 }
+        $smtpUseSsl = $SMTPUseSSL.IsPresent
+        $smtpUseStartTls = if ($PSBoundParameters.ContainsKey('SMTPUseStartTLS')) { $SMTPUseStartTLS.IsPresent } else { $true }
+        $emailFrom = $EmailFrom
+        $emailTo = $EmailTo
+        $emailSubject = if ($EmailSubject) { $EmailSubject } else { "Cisco Tech-Support Collection Report" }
         $smtpCredSetupSuccess = $false
 
+        # Check if email was enabled via parameter
+        $emailEnabledViaParam = $PSBoundParameters.ContainsKey('EnableEmail') -and $EnableEmail
+
         if (-not $SkipTaskCreation -and $ScheduleType -ne 'None') {
-            Write-Host ""
-            Write-LogSection "EMAIL NOTIFICATION CONFIGURATION"
+            # Only prompt if not already configured via parameters
+            if (-not $emailEnabledViaParam) {
+                Write-Host ""
+                Write-LogSection "EMAIL NOTIFICATION CONFIGURATION"
 
-            Write-Host ""
-            Write-Host "Email notifications can send automated collection reports after each run." -ForegroundColor Cyan
-            Write-Host ""
-            Write-Host "Features:" -ForegroundColor White
-            Write-Host "  - HTML email with collection summary" -ForegroundColor Gray
-            Write-Host "  - Attached detailed report" -ForegroundColor Gray
-            Write-Host "  - Success/failure status for each device" -ForegroundColor Gray
-            Write-Host "  - Audit metadata (timestamps, user, etc.)" -ForegroundColor Gray
-            Write-Host ""
+                Write-Host ""
+                Write-Host "Email notifications can send automated collection reports after each run." -ForegroundColor Cyan
+                Write-Host ""
+                Write-Host "Features:" -ForegroundColor White
+                Write-Host "  - HTML email with collection summary" -ForegroundColor Gray
+                Write-Host "  - Attached detailed report" -ForegroundColor Gray
+                Write-Host "  - Success/failure status for each device" -ForegroundColor Gray
+                Write-Host "  - Audit metadata (timestamps, user, etc.)" -ForegroundColor Gray
+                Write-Host ""
 
-            $response = Read-Host "Enable email notifications? (yes/no) [no]"
-            if ([string]::IsNullOrWhiteSpace($response)) { $response = 'no' }
+                $response = Read-Host "Enable email notifications? (yes/no) [no]"
+                if ([string]::IsNullOrWhiteSpace($response)) { $response = 'no' }
+            }
+            else {
+                # Email enabled via parameter, skip interactive prompt
+                $response = 'yes'
+                Write-Host ""
+                Write-LogSection "EMAIL NOTIFICATION CONFIGURATION"
+                Write-Host "Email notifications enabled via parameters" -ForegroundColor Green
+                Write-InstallLog -Message "Email notifications enabled via -EnableEmail parameter" -Level INFO
+            }
 
             if ($response -match '^y(es)?$|^Y(ES)?$') {
-                # SMTP Server Configuration
-                Write-Host ""
-                Write-Host "SMTP Server Configuration" -ForegroundColor Cyan
-                Write-Host "=========================================" -ForegroundColor Cyan
-                Write-Host ""
-
-                # SMTP Server
-                while ([string]::IsNullOrWhiteSpace($smtpServer)) {
-                    $smtpServer = Read-Host "SMTP server hostname or IP"
-                    if ([string]::IsNullOrWhiteSpace($smtpServer)) {
-                        Write-Host "ERROR: SMTP server is required" -ForegroundColor Red
-                    }
-                }
-
-                # SMTP Port
-                $portInput = Read-Host "SMTP port [587]"
-                if (-not [string]::IsNullOrWhiteSpace($portInput)) {
-                    if ($portInput -match '^\d+$') {
-                        $smtpPort = [int]$portInput
-                    }
-                    else {
-                        Write-Host "WARNING: Invalid port number, using default: 587" -ForegroundColor Yellow
-                        $smtpPort = 587
-                    }
-                }
-
-                # SMTP Encryption
-                Write-Host ""
-                Write-Host "SMTP Encryption Method" -ForegroundColor Cyan
-                Write-Host "  1. STARTTLS (port 587) - Recommended for most servers" -ForegroundColor White
-                Write-Host "  2. SSL/TLS (port 465) - Implicit SSL" -ForegroundColor White
-                Write-Host "  3. None (port 25) - Unencrypted (not recommended)" -ForegroundColor White
-                $encryptionChoice = Read-Host "Selection [1]"
-                if ([string]::IsNullOrWhiteSpace($encryptionChoice)) { $encryptionChoice = '1' }
-
-                switch ($encryptionChoice) {
-                    '1' {
-                        $smtpUseSsl = $false
-                        $smtpUseStartTls = $true
-                        Write-InstallLog -Message "SMTP encryption: STARTTLS" -Level INFO
-                    }
-                    '2' {
-                        $smtpUseSsl = $true
-                        $smtpUseStartTls = $false
-                        Write-InstallLog -Message "SMTP encryption: SSL/TLS" -Level INFO
-                    }
-                    '3' {
-                        $smtpUseSsl = $false
-                        $smtpUseStartTls = $false
-                        Write-Host "WARNING: Unencrypted SMTP is not recommended" -ForegroundColor Yellow
-                        Write-InstallLog -Message "SMTP encryption: None (unencrypted)" -Level WARNING
-                    }
-                    default {
-                        $smtpUseSsl = $false
-                        $smtpUseStartTls = $true
-                        Write-Host "Invalid selection, using STARTTLS (default)" -ForegroundColor Yellow
-                    }
-                }
-
-                # Email Addresses
-                Write-Host ""
-                Write-Host "Email Address Configuration" -ForegroundColor Cyan
-                Write-Host "=========================================" -ForegroundColor Cyan
-                Write-Host ""
-
-                # From Address
-                while ([string]::IsNullOrWhiteSpace($emailFrom)) {
-                    $emailFrom = Read-Host "From email address"
-                    if ([string]::IsNullOrWhiteSpace($emailFrom)) {
-                        Write-Host "ERROR: From address is required" -ForegroundColor Red
-                    }
-                }
-
-                # To Address(es)
-                while ([string]::IsNullOrWhiteSpace($emailTo)) {
-                    Write-Host "To email address(es) - separate multiple addresses with commas" -ForegroundColor Gray
-                    $emailTo = Read-Host "To email address(es)"
-                    if ([string]::IsNullOrWhiteSpace($emailTo)) {
-                        Write-Host "ERROR: At least one recipient is required" -ForegroundColor Red
-                    }
-                }
-
-                # Subject (optional - has default)
-                Write-Host ""
-                $subjectInput = Read-Host "Email subject [Cisco Tech-Support Collection Report]"
-                if (-not [string]::IsNullOrWhiteSpace($subjectInput)) {
-                    $emailSubject = $subjectInput
-                }
-
-                # SMTP Authentication
-                Write-Host ""
-                Write-Host "SMTP Authentication" -ForegroundColor Cyan
-                Write-Host "=========================================" -ForegroundColor Cyan
-                Write-Host ""
-                Write-Host "Does your SMTP server require authentication?" -ForegroundColor Cyan
-                $authResponse = Read-Host "(yes/no) [yes]"
-                if ([string]::IsNullOrWhiteSpace($authResponse)) { $authResponse = 'yes' }
-
-                if ($authResponse -match '^y(es)?$|^Y(ES)?$') {
-                    # Get SMTP credentials
+                # Only prompt for config if not provided via parameters
+                if (-not $emailEnabledViaParam) {
+                    # SMTP Server Configuration
                     Write-Host ""
-                    $smtpUsername = Read-Host "SMTP username"
+                    Write-Host "SMTP Server Configuration" -ForegroundColor Cyan
+                    Write-Host "=========================================" -ForegroundColor Cyan
+                    Write-Host ""
 
-                    if ([string]::IsNullOrWhiteSpace($smtpUsername)) {
-                        Write-Host "WARNING: SMTP username is required for authentication" -ForegroundColor Yellow
-                        Write-Host "Email notifications will be disabled" -ForegroundColor Yellow
-                        # Email will remain unconfigured (emailConfigured stays false)
+                    # SMTP Server
+                    while ([string]::IsNullOrWhiteSpace($smtpServer)) {
+                        $smtpServer = Read-Host "SMTP server hostname or IP"
+                        if ([string]::IsNullOrWhiteSpace($smtpServer)) {
+                            Write-Host "ERROR: SMTP server is required" -ForegroundColor Red
+                        }
                     }
-                    else {
-                        $smtpPassword = Read-Host "SMTP password" -AsSecureString
 
-                        # Create PSCredential object for SMTP
-                        $smtpCredential = New-Object System.Management.Automation.PSCredential($smtpUsername, $smtpPassword)
-
-                        # Create SMTP credential file using the service account
-                        Write-Host ""
-                        Write-Host "Creating encrypted SMTP credential file..." -ForegroundColor Cyan
-
-                        $smtpCredSetupSuccess = Start-SMTPCredentialSetup -ServiceAccountCred $serviceAccountCred `
-                                                                          -InstallPath $InstallPath `
-                                                                          -SMTPCredential $smtpCredential
-
-                        if (-not $smtpCredSetupSuccess) {
-                            Write-Host ""
-                            Write-Host ("=" * 80) -ForegroundColor Yellow
-                            Write-Host "SMTP CREDENTIAL SETUP FAILED" -ForegroundColor Yellow
-                            Write-Host ("=" * 80) -ForegroundColor Yellow
-                            Write-Host ""
-                            Write-Host "Email notifications will be disabled for this installation." -ForegroundColor Yellow
-                            Write-Host "You can manually configure SMTP credentials later by running:" -ForegroundColor White
-                            Write-Host "  Start-SMTPCredentialSetup function from this script" -ForegroundColor Gray
-                            Write-Host ""
-                            # Email will remain unconfigured (emailConfigured stays false)
+                    # SMTP Port
+                    $portInput = Read-Host "SMTP port [587]"
+                    if (-not [string]::IsNullOrWhiteSpace($portInput)) {
+                        if ($portInput -match '^\d+$') {
+                            $smtpPort = [int]$portInput
                         }
                         else {
-                            $emailConfigured = $true
-                            Write-InstallLog -Message "Email notifications enabled successfully" -Level SUCCESS
+                            Write-Host "WARNING: Invalid port number, using default: 587" -ForegroundColor Yellow
+                            $smtpPort = 587
+                        }
+                    }
+
+                    # SMTP Encryption
+                    Write-Host ""
+                    Write-Host "SMTP Encryption Method" -ForegroundColor Cyan
+                    Write-Host "  1. STARTTLS (port 587) - Recommended for most servers" -ForegroundColor White
+                    Write-Host "  2. SSL/TLS (port 465) - Implicit SSL" -ForegroundColor White
+                    Write-Host "  3. None (port 25) - Unencrypted (not recommended)" -ForegroundColor White
+                    $encryptionChoice = Read-Host "Selection [1]"
+                    if ([string]::IsNullOrWhiteSpace($encryptionChoice)) { $encryptionChoice = '1' }
+
+                    switch ($encryptionChoice) {
+                        '1' {
+                            $smtpUseSsl = $false
+                            $smtpUseStartTls = $true
+                            Write-InstallLog -Message "SMTP encryption: STARTTLS" -Level INFO
+                        }
+                        '2' {
+                            $smtpUseSsl = $true
+                            $smtpUseStartTls = $false
+                            Write-InstallLog -Message "SMTP encryption: SSL/TLS" -Level INFO
+                        }
+                        '3' {
+                            $smtpUseSsl = $false
+                            $smtpUseStartTls = $false
+                            Write-Host "WARNING: Unencrypted SMTP is not recommended" -ForegroundColor Yellow
+                            Write-InstallLog -Message "SMTP encryption: None (unencrypted)" -Level WARNING
+                        }
+                        default {
+                            $smtpUseSsl = $false
+                            $smtpUseStartTls = $true
+                            Write-Host "Invalid selection, using STARTTLS (default)" -ForegroundColor Yellow
                         }
                     }
                 }
                 else {
-                    # No authentication required
-                    Write-Host "SMTP authentication disabled" -ForegroundColor Yellow
-                    Write-InstallLog -Message "SMTP configured without authentication" -Level INFO
+                    # Parameters provided, log them
+                    Write-InstallLog -Message "SMTP Server: $smtpServer`:$smtpPort" -Level INFO
+                    if ($smtpUseSsl) {
+                        Write-InstallLog -Message "SMTP encryption: SSL/TLS" -Level INFO
+                    }
+                    elseif ($smtpUseStartTls) {
+                        Write-InstallLog -Message "SMTP encryption: STARTTLS" -Level INFO
+                    }
+                    else {
+                        Write-InstallLog -Message "SMTP encryption: None (unencrypted)" -Level WARNING
+                    }
+                }
+
+                # Email Addresses - only prompt if not provided via parameters
+                if (-not $emailEnabledViaParam) {
+                    Write-Host ""
+                    Write-Host "Email Address Configuration" -ForegroundColor Cyan
+                    Write-Host "=========================================" -ForegroundColor Cyan
+                    Write-Host ""
+
+                    # From Address
+                    while ([string]::IsNullOrWhiteSpace($emailFrom)) {
+                        $emailFrom = Read-Host "From email address"
+                        if ([string]::IsNullOrWhiteSpace($emailFrom)) {
+                            Write-Host "ERROR: From address is required" -ForegroundColor Red
+                        }
+                    }
+
+                    # To Address(es)
+                    while ([string]::IsNullOrWhiteSpace($emailTo)) {
+                        Write-Host "To email address(es) - separate multiple addresses with commas" -ForegroundColor Gray
+                        $emailTo = Read-Host "To email address(es)"
+                        if ([string]::IsNullOrWhiteSpace($emailTo)) {
+                            Write-Host "ERROR: At least one recipient is required" -ForegroundColor Red
+                        }
+                    }
+
+                    # Subject (optional - has default)
+                    Write-Host ""
+                    $subjectInput = Read-Host "Email subject [Cisco Tech-Support Collection Report]"
+                    if (-not [string]::IsNullOrWhiteSpace($subjectInput)) {
+                        $emailSubject = $subjectInput
+                    }
+                }
+                else {
+                    # Validate required parameters were provided
+                    if ([string]::IsNullOrWhiteSpace($emailFrom) -or [string]::IsNullOrWhiteSpace($emailTo)) {
+                        Write-Host "ERROR: -EmailFrom and -EmailTo are required when -EnableEmail is specified" -ForegroundColor Red
+                        Write-InstallLog -Message "Email configuration incomplete: missing required parameters" -Level ERROR
+                        # Email will remain unconfigured
+                    }
+                    else {
+                        Write-InstallLog -Message "Email From: $emailFrom" -Level INFO
+                        Write-InstallLog -Message "Email To: $emailTo" -Level INFO
+                        Write-InstallLog -Message "Email Subject: $emailSubject" -Level INFO
+                    }
+                }
+
+                # SMTP Authentication
+                # Check if credential was provided via parameter
+                if ($SMTPCredential) {
+                    # Use the provided credential
+                    Write-Host ""
+                    Write-Host "SMTP Authentication" -ForegroundColor Cyan
+                    Write-Host "=========================================" -ForegroundColor Cyan
+                    Write-Host "Using SMTP credentials from -SMTPCredential parameter" -ForegroundColor Green
+                    Write-InstallLog -Message "SMTP credentials provided via -SMTPCredential parameter" -Level INFO
+
+                    # Create SMTP credential file using the service account
+                    Write-Host ""
+                    Write-Host "Creating encrypted SMTP credential file..." -ForegroundColor Cyan
+
+                    $smtpCredSetupSuccess = Start-SMTPCredentialSetup -ServiceAccountCred $serviceAccountCred `
+                                                                      -InstallPath $InstallPath `
+                                                                      -SMTPCredential $SMTPCredential
+
+                    if ($smtpCredSetupSuccess) {
+                        $emailConfigured = $true
+                        Write-InstallLog -Message "Email notifications enabled successfully with parameter-provided credentials" -Level SUCCESS
+                    }
+                    else {
+                        Write-Host "ERROR: Failed to setup SMTP credentials" -ForegroundColor Red
+                        Write-InstallLog -Message "SMTP credential setup failed with parameter-provided credentials" -Level ERROR
+                    }
+                }
+                elseif (-not $emailEnabledViaParam) {
+                    # Interactive prompt for authentication
+                    Write-Host ""
+                    Write-Host "SMTP Authentication" -ForegroundColor Cyan
+                    Write-Host "=========================================" -ForegroundColor Cyan
+                    Write-Host ""
+                    Write-Host "Does your SMTP server require authentication?" -ForegroundColor Cyan
+                    $authResponse = Read-Host "(yes/no) [yes]"
+                    if ([string]::IsNullOrWhiteSpace($authResponse)) { $authResponse = 'yes' }
+
+                    if ($authResponse -match '^y(es)?$|^Y(ES)?$') {
+                        # Get SMTP credentials
+                        Write-Host ""
+                        $smtpUsername = Read-Host "SMTP username"
+
+                        if ([string]::IsNullOrWhiteSpace($smtpUsername)) {
+                            Write-Host "WARNING: SMTP username is required for authentication" -ForegroundColor Yellow
+                            Write-Host "Email notifications will be disabled" -ForegroundColor Yellow
+                            # Email will remain unconfigured (emailConfigured stays false)
+                        }
+                        else {
+                            $smtpPassword = Read-Host "SMTP password" -AsSecureString
+
+                            # Create PSCredential object for SMTP
+                            $smtpCredential = New-Object System.Management.Automation.PSCredential($smtpUsername, $smtpPassword)
+
+                            # Create SMTP credential file using the service account
+                            Write-Host ""
+                            Write-Host "Creating encrypted SMTP credential file..." -ForegroundColor Cyan
+
+                            $smtpCredSetupSuccess = Start-SMTPCredentialSetup -ServiceAccountCred $serviceAccountCred `
+                                                                              -InstallPath $InstallPath `
+                                                                              -SMTPCredential $smtpCredential
+
+                            if (-not $smtpCredSetupSuccess) {
+                                Write-Host ""
+                                Write-Host ("=" * 80) -ForegroundColor Yellow
+                                Write-Host "SMTP CREDENTIAL SETUP FAILED" -ForegroundColor Yellow
+                                Write-Host ("=" * 80) -ForegroundColor Yellow
+                                Write-Host ""
+                                Write-Host "Email notifications will be disabled for this installation." -ForegroundColor Yellow
+                                Write-Host "You can manually configure SMTP credentials later by running:" -ForegroundColor White
+                                Write-Host "  Start-SMTPCredentialSetup function from this script" -ForegroundColor Gray
+                                Write-Host ""
+                                # Email will remain unconfigured (emailConfigured stays false)
+                            }
+                            else {
+                                $emailConfigured = $true
+                                Write-InstallLog -Message "Email notifications enabled successfully" -Level SUCCESS
+                            }
+                        }
+                    }
+                    else {
+                        # No authentication required
+                        Write-Host "SMTP authentication disabled" -ForegroundColor Yellow
+                        Write-InstallLog -Message "SMTP configured without authentication" -Level INFO
+                        $emailConfigured = $true
+                    }
+                }
+                else {
+                    # Email enabled via parameter but no credential provided - assume no authentication
+                    Write-Host "SMTP authentication not configured (no -SMTPCredential parameter provided)" -ForegroundColor Yellow
+                    Write-InstallLog -Message "SMTP configured without authentication (no credential parameter)" -Level INFO
                     $emailConfigured = $true
                 }
 
