@@ -21,8 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - SMTP credential setup function parameter alignment
+- Email configuration ordering bug - moved email config before task creation to ensure parameters are included in scheduled task
 
-## [0.0.5] - 2025-12-20
+## [0.0.5] - 2025-12-21
 
 ### Added
 - **Evaluate-STIG Integration** - Automated STIG checklist generation

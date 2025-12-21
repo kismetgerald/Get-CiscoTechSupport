@@ -1300,10 +1300,13 @@ Read-Host
             Write-Host "Securing credential file..." -ForegroundColor Cyan -NoNewline
 
             # Run ACL operations as a job so we can show progress
+            # Note: $credPath is a file path, not a password (PSScriptAnalyzer false positive)
             $secureJob = Start-Job -ScriptBlock {
-                # PSScriptAnalyzer false positive: $credPath is a file path, not a password
-                [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
-                param($credPath, $serviceAccount)
+                param(
+                    [System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
+                    [string]$credPath,
+                    [string]$serviceAccount
+                )
 
                 try {
                     if (-not (Test-Path $credPath)) {
@@ -1676,10 +1679,13 @@ Read-Host
             Write-Host "Securing SMTP credential file..." -ForegroundColor Cyan -NoNewline
 
             # Run ACL operations as a job so we can show progress
+            # Note: $credPath is a file path, not a password (PSScriptAnalyzer false positive)
             $secureJob = Start-Job -ScriptBlock {
-                # PSScriptAnalyzer false positive: $credPath is a file path, not a password
-                [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
-                param($credPath, $serviceAccount)
+                param(
+                    [System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
+                    [string]$credPath,
+                    [string]$serviceAccount
+                )
 
                 try {
                     if (-not (Test-Path $credPath)) {
