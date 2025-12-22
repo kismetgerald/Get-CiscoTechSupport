@@ -9,3 +9,6 @@ Get-CiscoTechSupport.zip
 .vscode/
 Logs/
 Results/
+.checklist_helpers/
+TEST_VALIDATION_CHECKLIST_FINAL.html
+TEST_VALIDATION_CHECKLIST.pdf
