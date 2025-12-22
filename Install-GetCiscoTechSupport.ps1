@@ -219,7 +219,7 @@
 
 .NOTES
     Author: Kismet Agbasi (Github: kismetgerald Email: KismetG17@gmail.com)
-    Version: 0.0.5
+    Version: 0.0.6
     Date Created: December 4, 2025
     Last Updated: December 21, 2025
     Requires: PowerShell 5.1+ with Administrator privileges

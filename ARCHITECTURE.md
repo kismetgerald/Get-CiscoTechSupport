@@ -3,8 +3,8 @@
 ## Document Information
 
 **Project**: Get-CiscoTechSupport
-**Version**: 0.0.5
-**Date**: 2025-12-20
+**Version**: 0.0.6
+**Date**: 2025-12-21
 **Status**: Production Ready
 **Target Environment**: Secure/Air-Gapped Windows Networks
 

@@ -14,7 +14,7 @@
 #     Kismet Agbasi (Github: kismetgerald Email: KismetG17@gmail.com)
 #     
 # VERSION:
-#     0.0.5
+#     0.0.6
 #
 # CREATED:
 #     December 4, 2025
@@ -1287,7 +1287,7 @@ def collect_audit_metadata(start_time, end_time):
             'report_timestamp_long': datetime.now(timezone.utc).strftime('%B %d, %Y at %H:%M:%S UTC'),
             'start_timestamp': start_time.strftime('%Y-%m-%d %H:%M:%S UTC') if start_time else 'N/A',
             'end_timestamp': end_time.strftime('%Y-%m-%d %H:%M:%S UTC') if end_time else 'N/A',
-            'script_version': '0.0.5',
+            'script_version': '0.0.6',
             'executed_by_user': getpass.getuser(),
             'execution_hostname': hostname,
             'host_ip_address': host_ip,
@@ -1309,7 +1309,7 @@ def collect_audit_metadata(start_time, end_time):
             'host_ip_address': 'UNKNOWN',
             'domain': 'N/A',
             'working_directory': 'N/A',
-            'script_version': '0.0.5',
+            'script_version': '0.0.6',
         }
 
 
