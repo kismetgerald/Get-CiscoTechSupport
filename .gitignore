@@ -1,6 +1,7 @@
 # Created by Kismet Agbasi on 2025-12-04
 *.log
 .cisco_credentials
+.claude/
 claude.md
 Install-GetCiscoTechSupport_ChatGPT.ps1
 Get-CiscoTechSupport.zip
