@@ -2560,11 +2560,15 @@ function New-EvaluateSTIGTask {
         Creates a scheduled task for Evaluate-STIG STIG checklist generation
 
     .DESCRIPTION
-        Creates a monthly scheduled task that runs Evaluate-STIG.ps1 against
+        Creates a monthly scheduled task that runs the Invoke-EvaluateSTIG.ps1 wrapper
+        script to execute Evaluate-STIG.ps1 with comprehensive logging against
         collected Cisco tech-support files to generate STIG checklists.
     #>
     [CmdletBinding()]
     param(
+        [Parameter(Mandatory = $true)]
+        [string]$InstallPath,
+
         [Parameter(Mandatory = $true)]
         [string]$PowerShell7Path,
 
@@ -2624,11 +2628,20 @@ function New-EvaluateSTIGTask {
         Write-Host "Creating Evaluate-STIG scheduled task..." -ForegroundColor Cyan
         Write-InstallLog -Message "Creating Evaluate-STIG scheduled task" -Level INFO
 
-        # Build command-line arguments for Evaluate-STIG
+        # Build command-line arguments for wrapper script
+        $wrapperScriptPath = Join-Path $InstallPath "Invoke-EvaluateSTIG.ps1"
+        $logDirectory = Join-Path $InstallPath "Logs"
+
         $stigArguments = @()
         $stigArguments += "-ExecutionPolicy Bypass"
         $stigArguments += "-NoProfile"
-        $stigArguments += "-File `"$EvaluateSTIGScriptPath`""
+        $stigArguments += "-File `"$wrapperScriptPath`""
+
+        # Wrapper-specific parameters
+        $stigArguments += "-EvaluateSTIGScriptPath `"$EvaluateSTIGScriptPath`""
+        $stigArguments += "-LogDirectory `"$logDirectory`""
+
+        # Evaluate-STIG pass-through parameters
         $stigArguments += "-CiscoConfig `"$InputDirectory`""
         $stigArguments += "-SelectDeviceType $($DeviceType -join ',')"
         $stigArguments += "-ScanType $ScanType"
@@ -2665,7 +2678,7 @@ function New-EvaluateSTIGTask {
         $taskAction = New-ScheduledTaskAction `
             -Execute $PowerShell7Path `
             -Argument $argumentString `
-            -WorkingDirectory (Split-Path $EvaluateSTIGScriptPath -Parent)
+            -WorkingDirectory $InstallPath
 
         # Create monthly trigger using COM object for proper monthly scheduling
         # Note: New-ScheduledTaskTrigger doesn't support monthly triggers with specific days
@@ -4236,6 +4249,7 @@ try {
                         # Create Evaluate-STIG scheduled task
                         try {
                             $stigTaskName = New-EvaluateSTIGTask `
+                                -InstallPath $InstallPath `
                                 -PowerShell7Path $script:PowerShell7Path `
                                 -EvaluateSTIGScriptPath $EvaluateSTIGPath `
                                 -InputDirectory $EvaluateSTIGInputDirectory `
