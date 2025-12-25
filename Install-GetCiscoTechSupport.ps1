@@ -2643,7 +2643,13 @@ function New-EvaluateSTIGTask {
 
         # Evaluate-STIG pass-through parameters
         $stigArguments += "-CiscoConfig `"$InputDirectory`""
-        $stigArguments += "-SelectDeviceType $($DeviceType -join ',')"
+
+        # Array parameters need to be passed as individual quoted elements
+        $stigArguments += "-SelectDeviceType"
+        foreach ($type in $DeviceType) {
+            $stigArguments += "`"$type`""
+        }
+
         $stigArguments += "-ScanType $ScanType"
         $stigArguments += "-VulnTimeout $VulnTimeout"
         $stigArguments += "-FileSearchTimeout $FileSearchTimeout"
@@ -2652,7 +2658,12 @@ function New-EvaluateSTIGTask {
             $stigArguments += "-ApplyTattoo"
         }
 
-        $stigArguments += "-Output $($OutputFormat -join ',')"
+        # Array parameter for Output formats
+        $stigArguments += "-Output"
+        foreach ($format in $OutputFormat) {
+            $stigArguments += "`"$format`""
+        }
+
         $stigArguments += "-PreviousToKeep $PreviousToKeep"
         $stigArguments += "-OutputPath `"$OutputDirectory`""
 
