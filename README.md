@@ -46,7 +46,8 @@ cd "C:\Temp\Install-GetCiscoTechSupport"
 
 The installer guides you through:
 - **Installation path** (default: `C:\Scripts\Get-CiscoTechSupport`)
-- **Service account** credentials
+- **Service account** (account that runs the scheduled task)
+- **Device credentials** (Cisco username/password for device access)
 - **Collection mode** (Device List or Discovery)
 - **Schedule** (Daily, Weekly, or Monthly)
 - **Email notifications** (optional)
@@ -66,7 +67,11 @@ cd "C:\Scripts\Get-CiscoTechSupport"
 Check the scheduled task was created:
 
 ```powershell
-Get-ScheduledTask -TaskName "Cisco TechSupport*"
+# View collection tasks
+Get-ScheduledTask -TaskName "Cisco TechSupport Collector*" | Format-Table TaskName, State
+
+# View STIG task (if installed)
+Get-ScheduledTask -TaskName "Cisco STIG Checklist Generator" -ErrorAction SilentlyContinue | Format-Table TaskName, State
 ```
 
 ## System Requirements
@@ -110,11 +115,21 @@ Professional HTML email reports include:
 
 ### Email Configuration
 Configured during installation or via installer parameters:
-- SMTP server and port
-- Encryption (SSL/TLS/STARTTLS)
-- From/To addresses
-- Subject line (auto-dated)
-- Optional authentication (credentials stored via DPAPI)
+
+**Server & Connection:**
+- `SMTPServer` - SMTP server hostname or IP (required)
+- `SMTPPort` - SMTP port number (default: 587)
+- `SMTPUseSSL` - Use SSL implicit encryption (port 465)
+- `SMTPUseStartTLS` - Use STARTTLS explicit encryption (port 587)
+
+**Addresses:**
+- `EmailFrom` - Sender email address (required)
+- `EmailTo` - Recipient addresses, comma-separated (required)
+- `EmailSubject` - Custom subject (optional, auto-dated if not specified)
+
+**Authentication:**
+- `SMTPCredential` - PSCredential for SMTP authentication (optional)
+- Credentials stored encrypted via DPAPI in `.smtp_credentials`
 
 ## Output Structure
 
@@ -130,20 +145,23 @@ C:\Scripts\Get-CiscoTechSupport\
 ├── templates\                           # Email templates
 │   └── email_template.html              # HTML email template
 │
-├── Results\
+├── Results\                             # Tech-support output files
 │   ├── DEVICE01_10.0.1.1_20251218_030001_tech-support.txt
 │   ├── DEVICE02_10.0.1.2_20251218_030245_tech-support.txt
+│   │   (Format: HOSTNAME_IP_YYYYMMDD_HHMMSS_tech-support.txt)
 │   └── STIG_Checklists\                # STIG outputs (optional)
 │       ├── DEVICE01.cklb
 │       ├── DEVICE02.cklb
 │       └── Combined_Summary.xlsx
 │
-└── Logs\                                # Audit and operational logs
-    ├── Get-CiscoTechSupport-Install-20251218-060000.log  # Installation log
+└── Logs\                                # Collection and operational logs
     ├── collection.log                                     # Collection execution log
-    ├── hosts_offline.log                                  # Failed connections
+    ├── hosts_offline.log                                  # Failed device connections
     ├── console-output.log                                 # Python console output
     └── Invoke-EvaluateSTIG-20251225-040000.log           # STIG logs (monthly)
+
+C:\Logs\                                 # Installation logs (separate location)
+└── Get-CiscoTechSupport-Install-20251218-060000.log  # Installation log
 ```
 
 ## Advanced Installation
@@ -155,7 +173,7 @@ $svcAcctCred = Get-Credential -Message "Enter service account credentials"
 .\Install-GetCiscoTechSupport.ps1 `
     -ArchivePath ".\Get-CiscoTechSupport.zip" `
     -InstallPath "C:\Scripts\Get-CiscoTechSupport" `
-    -ServiceAccountCredential $cred `
+    -ServiceAccountCredential $svcAcctCred `
     -ScheduleType Weekly `
     -ScheduleTime "03:00"
 ```
@@ -205,11 +223,16 @@ Run both Device List and Discovery modes simultaneously by installing twice with
 ```
 
 Removes:
-- Installation directory and scripts
-- All scheduled tasks (collection + STIG)
+- Installation directory and scripts (except user data)
+- All scheduled tasks (DeviceList, Discovery, STIG)
 - Embedded Python distribution
+- Wrapper scripts (Invoke-EvaluateSTIG.ps1)
 
-**Note**: Credentials, device lists, and collected outputs are preserved and must be manually deleted if needed.
+Preserves (must delete manually if needed):
+- Credentials (`.cisco_credentials`, `.smtp_credentials`)
+- Device list (`devices.txt`)
+- Collection outputs (`Results\` directory)
+- Logs (`Logs\` directory)
 
 ## Security & Compliance
 
@@ -271,15 +294,26 @@ Removes:
 | "No devices found" (discovery) | Check CDP/SNMP configuration |
 | "SSH timeout" | Verify firewall rules and device SSH access |
 | "PowerShell 7 not found" (STIG) | Install PowerShell 7.x |
-| "Email send failed" | Check SMTP server, port, credentials |
+| "Exit code 0x1" (STIG task) | Check STIG wrapper script path and parameters in task |
+| "Email send failed" | Check SMTP server, port, credentials, network connectivity |
+| "AttributeError during email" | Update to latest version or reinstall |
 
 **For detailed troubleshooting, see the [Wiki](../../wiki)** (coming soon)
 
 ## Version History
 
-**Current Version**: 0.0.7
+**Current Version**: 0.0.7 (Released 2025-12-25)
 
-See [CHANGELOG.md](CHANGELOG.md) for complete version history.
+**Key Features by Version:**
+- **v0.0.7**: STIG execution logging wrapper
+- **v0.0.6**: Email notification system
+- **v0.0.5**: Evaluate-STIG integration
+- **v0.0.4**: Service account automation
+- **v0.0.3**: Installation and task creation
+- **v0.0.2**: Python runtime and discovery modes
+- **v0.0.1**: Initial release
+
+See [CHANGELOG.md](CHANGELOG.md) for detailed version history and fixes.
 
 ## License
 
