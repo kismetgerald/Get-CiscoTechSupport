@@ -15,7 +15,7 @@ Get-CiscoTechSupport automates the collection of diagnostic outputs from Cisco n
 - **Air-Gapped Ready** - All dependencies embedded, no internet connectivity required
 - **Secure Credential Storage** - Windows DPAPI encryption for credentials and SMTP passwords
 - **Service Account Execution** - Runs as dedicated service account with proper isolation
-- **Comprehensive Audit Trail** - Detailed logging with DoD compliance metadata
+- **Comprehensive Audit Trail** - Detailed logging with DoD compliance metadata, including STIG execution logs
 
 ## Quick Start
 

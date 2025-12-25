@@ -361,6 +361,102 @@ Continue Execution (Graceful Failure)
 6. Re-register task with service account credentials
 ```
 
+**Logging Wrapper Architecture**:
+
+The STIG task uses a wrapper script (`Invoke-EvaluateSTIG.ps1`) to add comprehensive logging without modifying the third-party Evaluate-STIG.ps1 script:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Windows Task Scheduler                                      │
+│   Trigger: Monthly, Day 1, 04:00 AM                         │
+└──────────────────┬──────────────────────────────────────────┘
+                   │
+                   │ Executes: pwsh.exe -File Invoke-EvaluateSTIG.ps1
+                   ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Invoke-EvaluateSTIG.ps1 (Wrapper)                          │
+│   - Generates timestamped log file                          │
+│   - Starts PowerShell transcript                            │
+│   - Logs execution metadata header                          │
+│   - Validates STIG script path exists                       │
+└──────────────────┬──────────────────────────────────────────┘
+                   │
+                   │ Calls via parameter splatting (@stigParams)
+                   ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Evaluate-STIG.ps1 (Third-Party)                            │
+│   - Scans Cisco config files                                │
+│   - Generates STIG checklists (CKLB, XCCDF, etc.)          │
+│   - All output captured by transcript                       │
+│   - Returns exit code                                       │
+└──────────────────┬──────────────────────────────────────────┘
+                   │
+                   │ Returns exit code
+                   ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Invoke-EvaluateSTIG.ps1 (Finally Block)                    │
+│   - Calculates duration                                     │
+│   - Logs execution summary footer                           │
+│   - Stops transcript                                        │
+│   - Exits with STIG script's exit code                      │
+└──────────────────┬──────────────────────────────────────────┘
+                   │
+                   │ Saves to Logs/
+                   ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Invoke-EvaluateSTIG-YYYYMMDD-HHMMSS.log                    │
+│   - PowerShell transcript markers                           │
+│   - Execution metadata (user, time, parameters)             │
+│   - Complete STIG script output                             │
+│   - Duration, exit code, success/failure status             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Wrapper Features**:
+- **Non-Invasive**: Evaluate-STIG.ps1 remains unmodified
+- **Centralized Logs**: All execution logs in `Logs/` with collection logs
+- **Comprehensive Capture**: PowerShell transcript captures verbose, debug, warning, and error streams
+- **Parameter Pass-Through**: All 14 Evaluate-STIG parameters forwarded via splatting
+- **Exit Code Preservation**: Task Scheduler receives actual STIG script exit code for error reporting
+- **Audit Trail**: User, timestamps, parameters, duration, and exit code logged
+- **Troubleshooting**: Complete STIG output available for debugging failures
+
+**Log File Format**:
+```
+**********************
+Windows PowerShell transcript start
+Start time: 20251225040015
+Username: DOMAIN\ServiceAccount
+**********************
+================================================================================
+EVALUATE-STIG EXECUTION LOG
+================================================================================
+Start Time:    2025-12-25 04:00:15
+Script:        C:\Admin\Evaluate-STIG\Evaluate-STIG.ps1
+Executed By:   ServiceAccount
+Computer:      SERVER01
+Parameters:
+  SelectDeviceType: Router,Switch
+  ScanType: Classified
+  Output: CKLB,CombinedCKLB,Summary,XCCDF
+  [... all parameters ...]
+================================================================================
+EXECUTING EVALUATE-STIG SCRIPT
+================================================================================
+[... Complete STIG script output captured ...]
+================================================================================
+EXECUTION SUMMARY
+================================================================================
+End Time:      2025-12-25 04:32:47
+Duration:      00:32:32
+Exit Code:     0
+Status:        SUCCESS
+================================================================================
+**********************
+Windows PowerShell transcript end
+**********************
+```
+
 ### 5. Credential Management Component
 
 **Security Architecture**:
