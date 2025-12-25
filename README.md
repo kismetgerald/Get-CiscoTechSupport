@@ -120,21 +120,30 @@ Configured during installation or via installer parameters:
 
 ```
 C:\Scripts\Get-CiscoTechSupport\
+├── get-ciscotechsupport.py              # Main collection script
+├── Install-GetCiscoTechSupport.ps1      # Installer script
+├── Invoke-EvaluateSTIG.ps1              # STIG wrapper (created during install)
+├── devices.txt                          # Device list (DeviceList mode)
+├── .cisco_credentials                   # Encrypted credentials (DPAPI)
+├── .smtp_credentials                    # Encrypted SMTP creds (DPAPI, optional)
+│
+├── templates\                           # Email templates
+│   └── email_template.html              # HTML email template
+│
 ├── Results\
-│   ├── DEVICE01_tech-support_2025-12-18_030001.txt
-│   ├── DEVICE02_tech-support_2025-12-18_030245.txt
-│   └── STIG_Checklists\          (if Evaluate-STIG enabled)
+│   ├── DEVICE01_10.0.1.1_20251218_030001_tech-support.txt
+│   ├── DEVICE02_10.0.1.2_20251218_030245_tech-support.txt
+│   └── STIG_Checklists\                # STIG outputs (optional)
 │       ├── DEVICE01.cklb
+│       ├── DEVICE02.cklb
 │       └── Combined_Summary.xlsx
-├── Logs\
-│   ├── Get-CiscoTechSupport_2025-12-18.log
-│   └── Get-CiscoTechSupport_2025-12-17.log
-├── devices.txt                     (Device List mode)
-├── .cisco_credentials              (encrypted)
-└── .smtp_credentials               (encrypted, if email enabled)
-
-C:\Logs\
-└── Get-CiscoTechSupport-Install_20251218-143022.log
+│
+└── Logs\                                # Audit and operational logs
+    ├── Get-CiscoTechSupport-Install-20251218-060000.log  # Installation log
+    ├── collection.log                                     # Collection execution log
+    ├── hosts_offline.log                                  # Failed connections
+    ├── console-output.log                                 # Python console output
+    └── Invoke-EvaluateSTIG-20251225-040000.log           # STIG logs (monthly)
 ```
 
 ## Advanced Installation
