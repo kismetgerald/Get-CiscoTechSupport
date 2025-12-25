@@ -2643,13 +2643,7 @@ function New-EvaluateSTIGTask {
 
         # Evaluate-STIG pass-through parameters
         $stigArguments += "-CiscoConfig `"$InputDirectory`""
-
-        # Array parameters need to be passed as individual quoted elements
-        $stigArguments += "-SelectDeviceType"
-        foreach ($type in $DeviceType) {
-            $stigArguments += "`"$type`""
-        }
-
+        $stigArguments += "-SelectDeviceType `"$($DeviceType -join ',')`""
         $stigArguments += "-ScanType $ScanType"
         $stigArguments += "-VulnTimeout $VulnTimeout"
         $stigArguments += "-FileSearchTimeout $FileSearchTimeout"
@@ -2658,12 +2652,7 @@ function New-EvaluateSTIGTask {
             $stigArguments += "-ApplyTattoo"
         }
 
-        # Array parameter for Output formats
-        $stigArguments += "-Output"
-        foreach ($format in $OutputFormat) {
-            $stigArguments += "`"$format`""
-        }
-
+        $stigArguments += "-Output `"$($OutputFormat -join ',')`""
         $stigArguments += "-PreviousToKeep $PreviousToKeep"
         $stigArguments += "-OutputPath `"$OutputDirectory`""
 
@@ -3386,7 +3375,6 @@ param(
     [string]$CiscoConfig,
 
     [Parameter(Mandatory = $false)]
-    [ValidateSet('Router', 'Switch')]
     [string[]]$SelectDeviceType,
 
     [Parameter(Mandatory = $false)]
@@ -3400,7 +3388,6 @@ param(
     [int]$FileSearchTimeout,
 
     [Parameter(Mandatory = $false)]
-    [ValidateSet('CKLB', 'CombinedCKLB', 'Summary', 'XCCDF')]
     [string[]]$Output,
 
     [Parameter(Mandatory = $false)]
