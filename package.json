@@ -1,0 +1,50 @@
+{
+  "name": "get-ciscotechsupport",
+  "version": "0.0.7",
+  "description": "Automated Cisco tech-support collection script with STIG integration, email notifications, and comprehensive audit logging for secure/air-gapped Windows networks",
+  "main": "get-ciscotechsupport.py",
+  "scripts": {
+    "install": "powershell -ExecutionPolicy Bypass -File .\\Install-GetCiscoTechSupport.ps1",
+    "uninstall": "powershell -ExecutionPolicy Bypass -File .\\Install-GetCiscoTechSupport.ps1 -Uninstall",
+    "test": "echo \"No automated tests configured\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kismetgerald/Get-CiscoTechSupport.git"
+  },
+  "keywords": [
+    "cisco",
+    "network-automation",
+    "tech-support",
+    "stig",
+    "compliance",
+    "dod",
+    "air-gapped",
+    "netmiko",
+    "snmp",
+    "automation",
+    "windows",
+    "powershell",
+    "python",
+    "network-monitoring"
+  ],
+  "author": {
+    "name": "Kismet Agbasi",
+    "email": "KismetG17@gmail.com",
+    "url": "https://github.com/kismetgerald"
+  },
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/kismetgerald/Get-CiscoTechSupport/issues"
+  },
+  "homepage": "https://github.com/kismetgerald/Get-CiscoTechSupport#readme",
+  "engines": {
+    "python": ">=3.6",
+    "powershell": ">=5.1"
+  },
+  "os": [
+    "win32"
+  ],
+  "devDependencies": {},
+  "dependencies": {}
+}

@@ -1,0 +1,31 @@
+# Get-CiscoTechSupport - Python Dependencies
+# Version: 0.0.7
+# Last Updated: 2025-12-25
+#
+# These dependencies are embedded in the Python3/ directory for air-gapped deployment.
+# For development or manual installation: pip install -r requirements.txt
+
+# Core Dependencies (Required)
+netmiko==4.6.0          # SSH connection handling for network devices
+pysnmp==7.1.22          # SNMP-based device discovery (v2c and v3)
+cryptography==46.0.3    # Secure credential storage (Windows DPAPI)
+jinja2==3.1.6           # HTML email template rendering
+
+# Netmiko Dependencies
+paramiko==4.0.0         # SSH protocol implementation
+bcrypt==5.0.0           # Password hashing for SSH keys
+cffi==2.0.0             # C Foreign Function Interface for cryptography
+invoke==2.2.1           # Task execution library
+textfsm==2.1.0          # Template-based text parsing
+ntc-templates==8.1.0    # Network device output templates
+
+# Jinja2 Dependencies
+MarkupSafe==3.0.3       # Safe string handling for Jinja2
+
+# Additional Utilities
+markdown-it-py==4.0.0   # Markdown parsing (indirect dependency)
+mdurl==0.1.2            # Markdown URL utilities (indirect dependency)
+
+# Development Dependencies (Not embedded)
+# pip==24.3.1           # Package installer (system-provided)
+# setuptools==75.6.0    # Build tools (system-provided)
