@@ -25,6 +25,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Missing instance variables in CiscoCollector class causing AttributeError during email notifications
 - -EnableEmail parameter not being honored in non-interactive mode (installer now checks $script:ScriptBoundParameters)
 
+## [0.0.7] - 2025-12-25
+
+### Added
+- **Evaluate-STIG Logging Wrapper** - Comprehensive logging for STIG task execution
+  - Wrapper script (Invoke-EvaluateSTIG.ps1) deployed to InstallPath during installation
+  - PowerShell transcript captures all STIG execution output
+  - Timestamped log files in Logs/ directory (Invoke-EvaluateSTIG-YYYYMMDD-HHMMSS.log)
+  - Execution metadata logging (timestamps, user, computer, parameters, exit code, duration)
+  - Pass-through parameter handling for all 14 Evaluate-STIG parameters
+  - Exit code propagation for Task Scheduler error reporting
+- Test-WrapperScript.ps1 diagnostic utility for troubleshooting wrapper execution
+
+### Fixed
+- Array parameter validation in Evaluate-STIG wrapper script
+  - Removed ValidateSet attributes from SelectDeviceType and Output parameters
+  - Restored comma-separated parameter format for Evaluate-STIG compatibility
+  - Fixed parameter binding issue causing task execution failures with exit code 0x1
+
+### Changed
+- Modified New-EvaluateSTIGTask function to use wrapper script instead of calling STIG script directly
+- Updated scheduled task working directory to InstallPath (from STIG script directory)
+- Wrapper script automatically removed during uninstallation via InstallPath directory deletion
+
+## [0.0.6] - 2025-12-22
+
+### Added
+- Email notification system completed and merged to main
+- Performance metrics documentation in .Performance_Metrics/ folder
+
 ## [0.0.5] - 2025-12-21
 
 ### Added

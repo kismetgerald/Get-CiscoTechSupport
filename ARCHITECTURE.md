@@ -95,10 +95,10 @@ Automate the collection and archival of Cisco device diagnostic outputs for:
 │  │  ┌──────▼──────────────────▼────────────────────▼───────┐  │ │
 │  │  │         Embedded Python 3.14 Runtime                 │  │ │
 │  │  │                                                      │  │ │
-│  │  │  ┌─────────┐ ┌─────────┐ ┌──────────────┐ ┌──────┐ │  │ │
-│  │  │  │ Netmiko │ │ PySNMP  │ │ Cryptography │ │Jinja2│ │  │ │
-│  │  │  └─────────┘ └─────────┘ └──────────────┘ └──────┘ │  │ │
-│  │  │  (SSH/CLI)   (Discovery)  (SSH Security)  (Email)   │  │ │
+│  │  │  ┌─────────┐ ┌─────────┐ ┌──────────────┐ ┌──────┐   │  │ │
+│  │  │  │ Netmiko │ │ PySNMP  │ │ Cryptography │ │Jinja2│   │  │ │
+│  │  │  └─────────┘ └─────────┘ └──────────────┘ └──────┘   │  │ │
+│  │  │  (SSH/CLI)   (Discovery)  (SSH Security)  (Email)    │  │ │
 │  │  └──────────────────────────────────────────────────────┘  │ │
 │  │                                                            | │
 │  │  ┌──────────────────────────────────────────────────────┐  │ │
@@ -269,25 +269,25 @@ Configure Credentials → Completion
 │                                                        │
 │  ┌──────────────────────────────────────────────────┐  │
 │  │         AUDIT METADATA (DoD Compliance)          │  │
-│  │  • Executed By: <Service Account>               │  │
-│  │  • Execution Time: <UTC Timestamp>              │  │
-│  │  • Collection Server: <Hostname>                │  │
-│  │  • Domain: <Domain Name>                        │  │
-│  │  • Collection Mode: DeviceList/Discovery        │  │
-│  │  • Output Directory: <Path>                     │  │
+│  │  • Executed By: <Service Account>                │  │
+│  │  • Execution Time: <UTC Timestamp>               │  │
+│  │  • Collection Server: <Hostname>                 │  │
+│  │  • Domain: <Domain Name>                         │  │
+│  │  • Collection Mode: DeviceList/Discovery         │  │
+│  │  • Output Directory: <Path>                      │  │
 │  └──────────────────────────────────────────────────┘  │
 │                                                        │
 │  ┌──────────────────────────────────────────────────┐  │
 │  │         DEVICE COLLECTION RESULTS                │  │
-│  │  Device Name   | IP Address  | Status           │  │
+│  │  Device Name   | IP Address  | Status            │  │
 │  │  ────────────────────────────────────────────    │  │
-│  │  DEVICE01      | 10.0.0.1    | ✓ Success        │  │
-│  │  DEVICE02      | 10.0.0.2    | ✗ Timeout        │  │
+│  │  DEVICE01      | 10.0.0.1    | ✓ Success         │  │
+│  │  DEVICE02      | 10.0.0.2    | ✗ Timeout         │  │
 │  │  ...                                             │  │
 │  └──────────────────────────────────────────────────┘  │
 │                                                        │
 │  📎 Attachment: detailed_report.html                  │
-│     (Full audit trail with timestamps, errors, etc.)  │
+│     (Full audit trail with timestamps, errors, etc.)   │
 └────────────────────────────────────────────────────────┘
 ```
 
@@ -359,6 +359,102 @@ Continue Execution (Graceful Failure)
 4. Set DaysOfMonth bit mask (e.g., day 1 = 1, day 15 = 16384)
 5. Set MonthsOfYear = 0xFFF (all 12 months)
 6. Re-register task with service account credentials
+```
+
+**Logging Wrapper Architecture**:
+
+The STIG task uses a wrapper script (`Invoke-EvaluateSTIG.ps1`) to add comprehensive logging without modifying the third-party Evaluate-STIG.ps1 script:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Windows Task Scheduler                                      │
+│   Trigger: Monthly, Day 1, 04:00 AM                         │
+└──────────────────┬──────────────────────────────────────────┘
+                   │
+                   │ Executes: pwsh.exe -File Invoke-EvaluateSTIG.ps1
+                   ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Invoke-EvaluateSTIG.ps1 (Wrapper)                           │
+│   - Generates timestamped log file                          │
+│   - Starts PowerShell transcript                            │
+│   - Logs execution metadata header                          │
+│   - Validates STIG script path exists                       │
+└──────────────────┬──────────────────────────────────────────┘
+                   │
+                   │ Calls via parameter splatting (@stigParams)
+                   ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Evaluate-STIG.ps1 (Third-Party)                             │
+│   - Scans Cisco config files                                │
+│   - Generates STIG checklists (CKLB, XCCDF, etc.)           │
+│   - All output captured by transcript                       │
+│   - Returns exit code                                       │
+└──────────────────┬──────────────────────────────────────────┘
+                   │
+                   │ Returns exit code
+                   ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Invoke-EvaluateSTIG.ps1 (Finally Block)                     │
+│   - Calculates duration                                     │
+│   - Logs execution summary footer                           │
+│   - Stops transcript                                        │
+│   - Exits with STIG script's exit code                      │
+└──────────────────┬──────────────────────────────────────────┘
+                   │
+                   │ Saves to Logs/
+                   ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Invoke-EvaluateSTIG-YYYYMMDD-HHMMSS.log                     │
+│   - PowerShell transcript markers                           │
+│   - Execution metadata (user, time, parameters)             │
+│   - Complete STIG script output                             │
+│   - Duration, exit code, success/failure status             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Wrapper Features**:
+- **Non-Invasive**: Evaluate-STIG.ps1 remains unmodified
+- **Centralized Logs**: All execution logs in `Logs/` with collection logs
+- **Comprehensive Capture**: PowerShell transcript captures verbose, debug, warning, and error streams
+- **Parameter Pass-Through**: All 14 Evaluate-STIG parameters forwarded via splatting
+- **Exit Code Preservation**: Task Scheduler receives actual STIG script exit code for error reporting
+- **Audit Trail**: User, timestamps, parameters, duration, and exit code logged
+- **Troubleshooting**: Complete STIG output available for debugging failures
+
+**Log File Format**:
+```
+**********************
+Windows PowerShell transcript start
+Start time: 20251225040015
+Username: DOMAIN\ServiceAccount
+**********************
+================================================================================
+EVALUATE-STIG EXECUTION LOG
+================================================================================
+Start Time:    2025-12-25 04:00:15
+Script:        C:\Admin\Evaluate-STIG\Evaluate-STIG.ps1
+Executed By:   ServiceAccount
+Computer:      SERVER01
+Parameters:
+  SelectDeviceType: Router,Switch
+  ScanType: Classified
+  Output: CKLB,CombinedCKLB,Summary,XCCDF
+  [... all parameters ...]
+================================================================================
+EXECUTING EVALUATE-STIG SCRIPT
+================================================================================
+[... Complete STIG script output captured ...]
+================================================================================
+EXECUTION SUMMARY
+================================================================================
+End Time:      2025-12-25 04:32:47
+Duration:      00:32:32
+Exit Code:     0
+Status:        SUCCESS
+================================================================================
+**********************
+Windows PowerShell transcript end
+**********************
 ```
 
 ### 5. Credential Management Component
@@ -1253,21 +1349,29 @@ C:\Scripts\Get-CiscoTechSupport\
 │
 ├── get-ciscotechsupport.py              # Main collection script (Python)
 ├── Install-GetCiscoTechSupport.ps1      # Installer script (PowerShell)
+├── Invoke-EvaluateSTIG.ps1              # STIG wrapper script (created during install)
 ├── devices.txt                          # Device list (DeviceList mode)
 ├── .cisco_credentials                   # Encrypted Cisco credentials (DPAPI)
 ├── .smtp_credentials                    # Encrypted SMTP credentials (DPAPI, optional)
 │
+├── templates\                           # Email templates
+│   └── email_template.html              # HTML email notification template
+│
 ├── Results\                             # Collection outputs
-│   ├── DEVICE01_tech-support_2025-12-18_030001.txt
-│   ├── DEVICE02_tech-support_2025-12-18_030245.txt
-│   └── STIG_Checklists\                # STIG outputs (optional)
+│   ├── DEVICE01_10.0.1.1_20251218_030001_tech-support.txt
+│   ├── DEVICE02_10.0.1.2_20251218_030245_tech-support.txt
+│   └── STIG_Checklists\                # STIG outputs (optional, created if enabled)
 │       ├── DEVICE01.cklb
-│       └── Combined_Summary.xlsx
+│       ├── DEVICE02.cklb
+│       ├── Combined_Summary.xlsx
+│       └── [Previous results retained per PreviousToKeep setting]
 │
 └── Logs\                                # Audit and operational logs
-    ├── Install_2025-12-18.log
-    ├── Get-CiscoTechSupport_2025-12-18.log
-    └── Get-CiscoTechSupport_2025-12-17.log
+    ├── Get-CiscoTechSupport-Install-20251218-060000.log    # Installation log
+    ├── collection.log                                       # Main collection execution log
+    ├── hosts_offline.log                                    # Failed device connections
+    ├── console-output.log                                   # Python console output
+    └── Invoke-EvaluateSTIG-20251225-040000.log             # STIG execution logs (monthly)
 ```
 
 ### Appendix B: Network Port Requirements

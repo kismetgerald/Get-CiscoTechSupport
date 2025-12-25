@@ -219,9 +219,9 @@
 
 .NOTES
     Author: Kismet Agbasi (Github: kismetgerald Email: KismetG17@gmail.com)
-    Version: 0.0.6
+    Version: 0.0.7
     Date Created: December 4, 2025
-    Last Updated: December 21, 2025
+    Last Updated: December 24, 2025
     Requires: PowerShell 5.1+ with Administrator privileges
     
     IMPORTANT: This script is designed for embedded Python distributions.
@@ -2560,11 +2560,15 @@ function New-EvaluateSTIGTask {
         Creates a scheduled task for Evaluate-STIG STIG checklist generation
 
     .DESCRIPTION
-        Creates a monthly scheduled task that runs Evaluate-STIG.ps1 against
+        Creates a monthly scheduled task that runs the Invoke-EvaluateSTIG.ps1 wrapper
+        script to execute Evaluate-STIG.ps1 with comprehensive logging against
         collected Cisco tech-support files to generate STIG checklists.
     #>
     [CmdletBinding()]
     param(
+        [Parameter(Mandatory = $true)]
+        [string]$InstallPath,
+
         [Parameter(Mandatory = $true)]
         [string]$PowerShell7Path,
 
@@ -2624,13 +2628,22 @@ function New-EvaluateSTIGTask {
         Write-Host "Creating Evaluate-STIG scheduled task..." -ForegroundColor Cyan
         Write-InstallLog -Message "Creating Evaluate-STIG scheduled task" -Level INFO
 
-        # Build command-line arguments for Evaluate-STIG
+        # Build command-line arguments for wrapper script
+        $wrapperScriptPath = Join-Path $InstallPath "Invoke-EvaluateSTIG.ps1"
+        $logDirectory = Join-Path $InstallPath "Logs"
+
         $stigArguments = @()
         $stigArguments += "-ExecutionPolicy Bypass"
         $stigArguments += "-NoProfile"
-        $stigArguments += "-File `"$EvaluateSTIGScriptPath`""
+        $stigArguments += "-File `"$wrapperScriptPath`""
+
+        # Wrapper-specific parameters
+        $stigArguments += "-EvaluateSTIGScriptPath `"$EvaluateSTIGScriptPath`""
+        $stigArguments += "-LogDirectory `"$logDirectory`""
+
+        # Evaluate-STIG pass-through parameters
         $stigArguments += "-CiscoConfig `"$InputDirectory`""
-        $stigArguments += "-SelectDeviceType $($DeviceType -join ',')"
+        $stigArguments += "-SelectDeviceType `"$($DeviceType -join ',')`""
         $stigArguments += "-ScanType $ScanType"
         $stigArguments += "-VulnTimeout $VulnTimeout"
         $stigArguments += "-FileSearchTimeout $FileSearchTimeout"
@@ -2639,7 +2652,7 @@ function New-EvaluateSTIGTask {
             $stigArguments += "-ApplyTattoo"
         }
 
-        $stigArguments += "-Output $($OutputFormat -join ',')"
+        $stigArguments += "-Output `"$($OutputFormat -join ',')`""
         $stigArguments += "-PreviousToKeep $PreviousToKeep"
         $stigArguments += "-OutputPath `"$OutputDirectory`""
 
@@ -2665,7 +2678,7 @@ function New-EvaluateSTIGTask {
         $taskAction = New-ScheduledTaskAction `
             -Execute $PowerShell7Path `
             -Argument $argumentString `
-            -WorkingDirectory (Split-Path $EvaluateSTIGScriptPath -Parent)
+            -WorkingDirectory $InstallPath
 
         # Create monthly trigger using COM object for proper monthly scheduling
         # Note: New-ScheduledTaskTrigger doesn't support monthly triggers with specific days
@@ -3280,6 +3293,225 @@ function Install-CiscoCollector {
             Write-InstallLog -Message "Required: $($script:RequiredPackages -join ', ')" -Level INFO
             throw "Missing required Python packages"
         }
+
+        #region Create Evaluate-STIG Wrapper Script
+        Write-InstallLog -Message "Creating Evaluate-STIG logging wrapper script" -Level INFO
+
+        $wrapperScriptPath = Join-Path $InstallPath "Invoke-EvaluateSTIG.ps1"
+        $wrapperContent = @'
+#Requires -Version 7.0
+
+<#
+.SYNOPSIS
+    Wrapper script to execute Evaluate-STIG.ps1 with comprehensive logging.
+
+.DESCRIPTION
+    This wrapper script captures all output from Evaluate-STIG.ps1 execution
+    including verbose, debug, warning, and error streams. Logs are stored in
+    the Logs directory for centralized troubleshooting and audit purposes.
+
+.PARAMETER EvaluateSTIGScriptPath
+    Full path to the Evaluate-STIG.ps1 script
+
+.PARAMETER LogDirectory
+    Directory where execution logs will be stored
+
+.PARAMETER CiscoConfig
+    Path to directory containing Cisco configuration files (pass-through to STIG script)
+
+.PARAMETER SelectDeviceType
+    Device types to scan: Router, Switch (pass-through to STIG script)
+
+.PARAMETER ScanType
+    Scan type: Classified or Unclassified (pass-through to STIG script)
+
+.PARAMETER VulnTimeout
+    Timeout in minutes for vulnerability checks (pass-through to STIG script)
+
+.PARAMETER FileSearchTimeout
+    Timeout in minutes for file searches (pass-through to STIG script)
+
+.PARAMETER Output
+    Output formats: CKLB, CombinedCKLB, Summary, XCCDF (pass-through to STIG script)
+
+.PARAMETER PreviousToKeep
+    Number of previous results to retain (pass-through to STIG script)
+
+.PARAMETER OutputPath
+    Path where STIG checklists will be saved (pass-through to STIG script)
+
+.PARAMETER ThrottleLimit
+    Maximum number of concurrent scans (pass-through to STIG script)
+
+.PARAMETER Marking
+    Optional classification marking (pass-through to STIG script)
+
+.PARAMETER TargetComments
+    Optional target comments (pass-through to STIG script)
+
+.PARAMETER ApplyTattoo
+    Apply tattoo to output files (pass-through to STIG script)
+
+.PARAMETER AllowDeprecated
+    Allow deprecated STIG versions (pass-through to STIG script)
+
+.NOTES
+    Version: 1.0.0
+    Author: Get-CiscoTechSupport Installer
+    Created: 2025-12-24
+    Purpose: Centralized logging for Evaluate-STIG scheduled task execution
+#>
+
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$EvaluateSTIGScriptPath,
+
+    [Parameter(Mandatory = $true)]
+    [string]$LogDirectory,
+
+    # Evaluate-STIG pass-through parameters
+    [Parameter(Mandatory = $false)]
+    [string]$CiscoConfig,
+
+    [Parameter(Mandatory = $false)]
+    [string[]]$SelectDeviceType,
+
+    [Parameter(Mandatory = $false)]
+    [ValidateSet('Classified', 'Unclassified')]
+    [string]$ScanType,
+
+    [Parameter(Mandatory = $false)]
+    [int]$VulnTimeout,
+
+    [Parameter(Mandatory = $false)]
+    [int]$FileSearchTimeout,
+
+    [Parameter(Mandatory = $false)]
+    [string[]]$Output,
+
+    [Parameter(Mandatory = $false)]
+    [int]$PreviousToKeep,
+
+    [Parameter(Mandatory = $false)]
+    [string]$OutputPath,
+
+    [Parameter(Mandatory = $false)]
+    [int]$ThrottleLimit,
+
+    [Parameter(Mandatory = $false)]
+    [string]$Marking,
+
+    [Parameter(Mandatory = $false)]
+    [string]$TargetComments,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$ApplyTattoo,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$AllowDeprecated
+)
+
+# Generate timestamped log file name
+$timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+$logFileName = "Invoke-EvaluateSTIG-$timestamp.log"
+$logFilePath = Join-Path $LogDirectory $logFileName
+
+# Ensure log directory exists
+if (-not (Test-Path $LogDirectory)) {
+    New-Item -ItemType Directory -Path $LogDirectory -Force | Out-Null
+}
+
+# Start execution tracking
+$startTime = Get-Date
+
+try {
+    # Start PowerShell transcript
+    Start-Transcript -Path $logFilePath -Append
+
+    # Log header with execution metadata
+    Write-Host "================================================================================"
+    Write-Host "EVALUATE-STIG EXECUTION LOG"
+    Write-Host "================================================================================"
+    Write-Host "Start Time:    $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+    Write-Host "Script:        $EvaluateSTIGScriptPath"
+    Write-Host "Executed By:   $env:USERNAME"
+    Write-Host "Computer:      $env:COMPUTERNAME"
+    Write-Host "Log File:      $logFilePath"
+    Write-Host "================================================================================"
+    Write-Host ""
+
+    # Build parameter hashtable for splatting
+    $stigParams = @{}
+
+    if ($PSBoundParameters.ContainsKey('CiscoConfig')) { $stigParams['CiscoConfig'] = $CiscoConfig }
+    if ($PSBoundParameters.ContainsKey('SelectDeviceType')) { $stigParams['SelectDeviceType'] = $SelectDeviceType }
+    if ($PSBoundParameters.ContainsKey('ScanType')) { $stigParams['ScanType'] = $ScanType }
+    if ($PSBoundParameters.ContainsKey('VulnTimeout')) { $stigParams['VulnTimeout'] = $VulnTimeout }
+    if ($PSBoundParameters.ContainsKey('FileSearchTimeout')) { $stigParams['FileSearchTimeout'] = $FileSearchTimeout }
+    if ($PSBoundParameters.ContainsKey('Output')) { $stigParams['Output'] = $Output }
+    if ($PSBoundParameters.ContainsKey('PreviousToKeep')) { $stigParams['PreviousToKeep'] = $PreviousToKeep }
+    if ($PSBoundParameters.ContainsKey('OutputPath')) { $stigParams['OutputPath'] = $OutputPath }
+    if ($PSBoundParameters.ContainsKey('ThrottleLimit')) { $stigParams['ThrottleLimit'] = $ThrottleLimit }
+    if ($PSBoundParameters.ContainsKey('Marking')) { $stigParams['Marking'] = $Marking }
+    if ($PSBoundParameters.ContainsKey('TargetComments')) { $stigParams['TargetComments'] = $TargetComments }
+    if ($PSBoundParameters.ContainsKey('ApplyTattoo')) { $stigParams['ApplyTattoo'] = $ApplyTattoo.IsPresent }
+    if ($PSBoundParameters.ContainsKey('AllowDeprecated')) { $stigParams['AllowDeprecated'] = $AllowDeprecated.IsPresent }
+
+    # Log parameters
+    Write-Host "Parameters:"
+    $stigParams.GetEnumerator() | Sort-Object Name | ForEach-Object {
+        Write-Host "  $($_.Key): $($_.Value)"
+    }
+    Write-Host ""
+
+    # Verify Evaluate-STIG script exists
+    if (-not (Test-Path $EvaluateSTIGScriptPath)) {
+        throw "Evaluate-STIG script not found: $EvaluateSTIGScriptPath"
+    }
+
+    # Execute Evaluate-STIG.ps1 with all parameters
+    Write-Host "================================================================================"
+    Write-Host "EXECUTING EVALUATE-STIG SCRIPT"
+    Write-Host "================================================================================"
+    Write-Host ""
+
+    & $EvaluateSTIGScriptPath @stigParams
+
+    $exitCode = $LASTEXITCODE
+    if ($null -eq $exitCode) { $exitCode = 0 }
+
+} catch {
+    Write-Error "ERROR: $($_.Exception.Message)"
+    Write-Error "Stack Trace: $($_.ScriptStackTrace)"
+    $exitCode = 1
+} finally {
+    # Calculate duration
+    $endTime = Get-Date
+    $duration = $endTime - $startTime
+
+    # Log footer
+    Write-Host ""
+    Write-Host "================================================================================"
+    Write-Host "EXECUTION SUMMARY"
+    Write-Host "================================================================================"
+    Write-Host "End Time:      $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+    Write-Host "Duration:      $($duration.ToString('hh\:mm\:ss'))"
+    Write-Host "Exit Code:     $exitCode"
+    Write-Host "Status:        $(if ($exitCode -eq 0) { 'SUCCESS' } else { 'FAILED' })"
+    Write-Host "================================================================================"
+
+    # Stop transcript
+    Stop-Transcript
+
+    # Exit with same code as Evaluate-STIG
+    exit $exitCode
+}
+'@
+
+        Set-Content -Path $wrapperScriptPath -Value $wrapperContent -Encoding UTF8
+        Write-InstallLog -Message "Wrapper script created: $wrapperScriptPath" -Level SUCCESS
+        #endregion
 
         if (-not $SkipTaskCreation -and $ScheduleType -ne 'None') {
             Write-LogSection "SCHEDULED TASK CREATION"
@@ -4015,6 +4247,7 @@ function Install-CiscoCollector {
                         # Create Evaluate-STIG scheduled task
                         try {
                             $stigTaskName = New-EvaluateSTIGTask `
+                                -InstallPath $InstallPath `
                                 -PowerShell7Path $script:PowerShell7Path `
                                 -EvaluateSTIGScriptPath $EvaluateSTIGPath `
                                 -InputDirectory $EvaluateSTIGInputDirectory `
