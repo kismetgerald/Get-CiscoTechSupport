@@ -268,7 +268,7 @@ Removes:
 
 ## Version History
 
-**Current Version**: 0.0.6
+**Current Version**: 0.0.7
 
 See [CHANGELOG.md](CHANGELOG.md) for complete version history.
 
