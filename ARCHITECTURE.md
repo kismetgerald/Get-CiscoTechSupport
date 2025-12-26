@@ -745,6 +745,8 @@ Restart-Computer
 9. **FIPS Mode**: Enable Windows FIPS mode for DoD/IC environments
 10. **Patch Management**: Keep Windows Server and PowerShell updated per DISA guidance
 
+**For security vulnerability reporting and additional deployment guidance, see [SECURITY.md](SECURITY.md).**
+
 ---
 
 ## Data Flow

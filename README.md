@@ -272,11 +272,27 @@ Preserves (must delete manually if needed):
 - Security Best Practices
 - Development & Contributing
 
-## Support & Contributing
+## Contributing
 
+Contributions are welcome! Please see our community standards documentation:
+
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** - Development guidelines, coding standards, and testing requirements
+- **[SECURITY.md](SECURITY.md)** - Security vulnerability reporting and DoD deployment guidance
+- **[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)** - Community standards and expected behavior
+
+**Before submitting a pull request:**
+- Read the contribution guidelines thoroughly
+- Complete all security testing requirements
+- Verify air-gap compatibility is maintained
+- Update documentation (README, ARCHITECTURE, CHANGELOG)
+- Test with service account (not current user context)
+- Ensure NO credentials in code, logs, or commits
+
+**For questions and support:**
 - **Issues**: [GitHub Issues](../../issues)
+- **Discussions**: [GitHub Discussions](../../discussions)
 - **Releases**: [Latest Releases](../../releases)
-- **Contributing**: Pull requests welcome
+- **Email**: KismetG17@gmail.com
 
 ## Troubleshooting
 
